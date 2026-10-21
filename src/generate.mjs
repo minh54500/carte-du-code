@@ -38,7 +38,8 @@ export function generate(root, cfg) {
     name: map.name, kinds: map.kinds, generated: new Date().toISOString(), files: map.files,
     nodes: map.nodes.map(({ id, col, label, file, desc, badge, route, endpoint, uses, test, group }) => ({ id, col, label, file, desc, badge, route, endpoint, uses, test, group })),
     edges: map.edges, env: Object.fromEntries([...map.env].map(([k, v]) => [k, [...v]])), hosting: map.host,
-    health: { unused: health.unused.map((n) => n.id), cycles: health.cycles.map((c) => c.map((n) => n.id)), sensitive: health.sensitive.map((x) => ({ id: x.n.id, dependents: x.count })) },
+    health: { unused: health.unused.map((n) => n.id), cycles: health.cycles.map((c) => c.map((n) => n.id)), sensitive: health.sensitive.map((x) => ({ id: x.n.id, dependents: x.count, direct: x.direct })),
+      undescribed: { total: health.undescribed.total, top: health.undescribed.top.map((x) => ({ id: x.n.id, users: x.users })) } },
     changes, hues,
   }, null, 2));
   return { map, paths, health, changes, summary: t('cli.done', { nodes: map.nodes.length, edges: map.edges.length, kinds: map.kinds.join(', ') || '?' }) };

@@ -1,6 +1,6 @@
 // The graph page: one self-contained HTML file (no network, no library). Two views:
 // "brain", a force-directed network coloured by folder (files, or folder bubbles on big projects), and
-// "columns", pages → blocks → data → database → server → tools. Health and changes panels, filters, deep links.
+// "columns", pages → blocks → data → database → server → tools → docs. Health and changes panels, filters, deep links.
 import { COLUMNS, columnTitle } from './render-md.mjs';
 import { famOf, folderHues } from './query.mjs';
 
@@ -10,7 +10,7 @@ export function renderHtml(map, t, { date, lang, html, root = '', health = null,
     title: map.name, kinds: map.kinds, date, cols, T: html, root, hues,
     nodes: map.nodes.map((n) => ({ id: n.id, col: n.col, label: n.label, file: n.file || '', desc: n.desc || '', badge: n.badge || '', uses: n.uses, test: !!n.test, fam: famOf(n) })),
     edges: map.edges,
-    health: health ? { unused: health.unused.map((n) => n.id), cycles: health.cycles.map((c) => c.map((n) => n.id)), sensitive: health.sensitive.map((x) => [x.n.id, x.count]) } : null,
+    health: health ? { unused: health.unused.map((n) => n.id), cycles: health.cycles.map((c) => c.map((n) => n.id)), sensitive: health.sensitive.map((x) => [x.n.id, x.count]), undescribed: (health.undescribed?.top || []).map((x) => [x.n.id, x.users]) } : null,
     changes: changes ? { added: changes.added, removed: changes.removed.map((n) => n.label), since: changes.since } : null,
   };
   const title = String(map.name).replace(/[<&]/g, (c) => ({ '<': '&lt;', '&': '&amp;' }[c]));
@@ -32,7 +32,7 @@ button:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid
 .count{display:inline-block;min-width:18px;margin-left:4px;padding:0 5px;border-radius:99px;background:var(--hi);color:#fff;font-size:11px;text-align:center}
 details.filters{position:relative}details.filters .menu{position:absolute;top:calc(100% + 6px);left:0;z-index:8;display:grid;gap:6px;min-width:220px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--card);box-shadow:0 8px 30px rgba(0,0,0,.15)}
 body.brain details.filters .menu{background:#0f1530;border-color:#27305a}details.filters label{display:flex;gap:8px;align-items:center;cursor:pointer}
-main{position:relative;display:grid;grid-template-columns:repeat(${cols.length},minmax(170px,1fr));gap:28px;padding:20px;min-width:${cols.length * 200}px}
+main{position:relative;display:grid;grid-template-columns:repeat(${cols.length},minmax(${cols.length > 6 ? 150 : 170}px,1fr));gap:${cols.length > 6 ? 20 : 28}px;padding:20px;min-width:${cols.length * (cols.length > 6 ? 170 : 200)}px}
 body.brain main{display:none}#cv{display:none;position:fixed;inset:0;cursor:grab;touch-action:none}body.brain #cv{display:block}#cv.drag{cursor:grabbing}
 svg{position:absolute;inset:0;pointer-events:none;overflow:visible}
 .col h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 10px}
@@ -62,8 +62,8 @@ aside a{color:#5b8cff}aside .item{all:unset;cursor:pointer;color:#5b8cff;text-de
 <aside id="info" hidden aria-live="polite"></aside>
 <script>
 const D=${JSON.stringify(data).replace(/</g, '\\u003c')},T=D.T;
-const COLOR={page:'#2563eb',bloc:'#7c3aed',data:'#0d9488',db:'#b45309',server:'#be123c',tool:'#475569'};
-const GLOW={page:'#5b8cff',bloc:'#a77bff',data:'#2ee6c9',db:'#ffb347',server:'#ff5d7a',tool:'#9fb0c9'};
+const COLOR={page:'#2563eb',bloc:'#7c3aed',data:'#0d9488',db:'#b45309',server:'#be123c',tool:'#475569',doc:'#78716c'};
+const GLOW={page:'#5b8cff',bloc:'#a77bff',data:'#2ee6c9',db:'#ffb347',server:'#ff5d7a',tool:'#9fb0c9',doc:'#c8bfae'};
 const $=(id)=>document.getElementById(id),m=$('m'),s=$('s'),info=$('info'),q=$('q'),cv=$('cv'),tip=$('tip');
 const esc=(t)=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 $('meta').textContent=D.kinds.join(' · ')+' · '+D.date+' · '+D.nodes.length+' '+T['html.elements']+', '+D.edges.length+' '+T['html.links'];
@@ -100,7 +100,8 @@ $('hb').innerHTML=esc(T['html.health'])+(nHealth?'<span class="count">'+nHealth+
 $('hb').onclick=()=>{if(!HL)return;listPanel(T['html.health'],
  '<h4>'+esc(T['html.unused'])+' ('+HL.unused.length+')</h4>'+(HL.unused.length?'<ul>'+HL.unused.map(id=>itemBtn(id)).join('')+'</ul>':'<p>'+esc(T['html.none'])+'</p>')+
  '<h4>'+esc(T['html.cycles'])+' ('+HL.cycles.length+')</h4>'+(HL.cycles.length?'<ul>'+HL.cycles.slice(0,20).map(c=>'<li>'+c.slice(0,8).map(id=>'<button class="item" data-id="'+esc(id)+'">'+esc(byId.get(id).label)+'</button>').join(' ↔ ')+(c.length>8?' … ('+c.length+')':'')+'</li>').join('')+'</ul>':'<p>'+esc(T['html.none'])+'</p>')+
- '<h4>'+esc(T['html.sensitive'])+'</h4>'+(HL.sensitive.length?'<ul>'+HL.sensitive.map(([id,c])=>itemBtn(id,c+' ←')).join('')+'</ul>':'<p>'+esc(T['html.none'])+'</p>'))};
+ '<h4>'+esc(T['html.sensitive'])+'</h4>'+(HL.sensitive.length?'<ul>'+HL.sensitive.map(([id,c])=>itemBtn(id,c+' ←')).join('')+'</ul>':'<p>'+esc(T['html.none'])+'</p>')+
+ (HL.undescribed&&HL.undescribed.length?'<h4>'+esc(T['html.undescribed'])+'</h4><ul>'+HL.undescribed.map(([id,c])=>itemBtn(id,c+' ←')).join('')+'</ul>':''))};
 const CH=D.changes;if(CH&&(CH.added.length||CH.removed.length)){$('cb').hidden=false;$('cb').innerHTML=esc(T['html.changes'])+'<span class="count" style="background:#16a34a">'+(CH.added.length+CH.removed.length)+'</span>';
  $('cb').onclick=()=>listPanel(T['html.changes'],(CH.since?'<p><code>'+esc(new Date(CH.since).toLocaleString())+'</code></p>':'')+(CH.added.length?'<h4>+ '+CH.added.length+'</h4><ul>'+CH.added.map(id=>itemBtn(id)).join('')+'</ul>':'')+(CH.removed.length?'<h4>− '+CH.removed.length+'</h4><ul>'+CH.removed.map(l=>'<li>'+esc(l)+'</li>').join('')+'</ul>':''))}
 function flash(text){tip.hidden=false;tip.textContent=text;tip.style.left='50%';tip.style.top='70px';setTimeout(()=>{tip.hidden=true},1400)}

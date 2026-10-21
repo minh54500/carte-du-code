@@ -5,7 +5,7 @@ un fichier Markdown que ton assistant IA (Claude Code, Cursor, Copilot…) lit a
 
 Zéro dépendance · rien ne sort de ta machine · 0,2 s sur un site, 0,3 s pour 1 500 fichiers.
 
-**[Voir la démo en ligne](https://minh54500.github.io/carte-du-code/)** (la carte de ce dépôt et de ses 8 mini-projets de test).
+**[Voir la démo en ligne](https://minh54500.github.io/carte-du-code/)** (la carte de ce dépôt, et celle d'un site de restaurant d'exemple).
 
 ![Vue cerveau : un clic sur la table dishes allume tout son chemin](media/apercu-cerveau.png)
 
@@ -42,16 +42,16 @@ Trois fichiers dans `docs/carte/` :
 | Fichier | Pour qui | Contenu |
 |---|---|---|
 | `carte-du-code.md` | ton assistant IA | chaque élément, son rôle (son premier commentaire), → ce qu'il utilise, ← qui l'utilise |
-| `carte-du-code.html` | toi | le graphe : vue **Cerveau** (réseau, couleurs par dossier) ou **Colonnes** (pages → blocs → données → base → serveur → outils), recherche, clic = chemin complet, export PNG |
+| `carte-du-code.html` | toi | le graphe : vue **Cerveau** (réseau, couleurs par dossier) ou **Colonnes** (pages → blocs → données → base → serveur → outils → documents), recherche, clic = chemin complet, export PNG |
 | `carte-du-code.json` | tes outils | les nœuds et les liens, la santé et les changements, pour d'autres scripts ou agents |
 
 Sur un gros projet (plus de 400 éléments), le Markdown est condensé par dossier et le détail de chaque fichier part dans `carte-du-code-detail.md`.
 
 ### Ce que montre le graphe
 
-- **Cerveau** (réseau, couleurs par dossier) ou **Colonnes** (pages → blocs → données → base → serveur → outils). Clic sur un élément : tout son chemin s'allume.
+- **Cerveau** (réseau, couleurs par dossier) ou **Colonnes** (pages → blocs → données → base → serveur → outils → documents et brouillons). Clic sur un élément : tout son chemin s'allume.
 - **Dossiers** : sur un gros projet, une bulle par dossier ; un clic ouvre le dossier.
-- **Santé** : les fichiers que plus personne n'importe, les boucles d'imports (A utilise B qui utilise A), les fichiers sensibles dont dépendent le plus d'autres.
+- **Santé** : les fichiers que plus personne n'importe, les boucles d'imports (A utilise B qui utilise A), les fichiers sensibles dont dépendent le plus d'autres, et les fichiers à décrire en priorité (les plus utilisés sans commentaire en tête).
 - **Changements** : ce qui est apparu ou a disparu depuis la carte précédente (cercle vert = nouveau).
 - **Afficher** : masquer une colonne ou les tests. **Ouvrir dans VS Code** sur chaque fichier, et un lien direct vers chaque élément (`#n=…`) à partager.
 
@@ -65,13 +65,13 @@ Sur un gros projet (plus de 400 éléments), le Markdown est condensé par dossi
 |---|---|
 | Sites et apps | Astro, Next.js (app et pages router, groupes, layouts, route handlers), SvelteKit (layouts, fichiers `load`), Nuxt (layouts, `server/api`), React Router, Vite, React, Django, HTML simple |
 | Monorepos | workspaces npm, yarn et pnpm : un paquet importé par son nom mène à son fichier, chaque route porte le nom de son app |
-| Imports | JS/TS (`import`, `require`, `import()`, alias `@/`, `paths` du tsconfig, `./x.js` → `x.ts`), `<script src>`, Python (`import`, `from … import`), Swift (types partagés), scripts shell qui lancent un autre fichier |
-| Base de données | migrations SQL / Supabase (tables, RLS, politiques lecture/écriture, fonctions `security definer`, boucles `format()`, `pg_cron`, stockage), modèles Prisma, Django, Drizzle, Mongoose, collections Firestore, appels `.from()`, REST, `rpc()`, `prisma.x` |
+| Imports | JS/TS (`import`, `require`, `import()`, alias `@/`, `paths` du tsconfig, `./x.js` → `x.ts`), `<script src>`, Python (`import`, `from … import`), Swift (types nommés dans le code, `extension`), scripts shell qui lancent un autre fichier |
+| Base de données | migrations SQL / Supabase, écrites à la main ou par `supabase db diff` (tables, RLS, politiques lecture/écriture, fonctions `security definer`, boucles `format()`, `pg_cron`, stockage ; ce que chaque fonction lit et écrit, les fonctions qu'elle appelle, les déclencheurs et les politiques qui l'utilisent), modèles Prisma, Django, Drizzle, Mongoose, collections Firestore, appels `.from()`, REST, `rpc()`, `prisma.x` |
 | Serveur | fonctions Vercel (`api/`), Netlify, Supabase Edge, endpoints Astro/SvelteKit, routes Express, Fastify, Flask, FastAPI, appels `fetch('/api/…')` |
-| Tâches et outils | crons Vercel, `pg_cron`, scripts `package.json`, scripts qui écrivent des données générées |
+| Tâches et outils | crons Vercel, `pg_cron`, scripts `package.json`, scripts qui écrivent des données générées, scripts lancés en ligne de commande (`node pdf.mjs <fichier>`) |
 | Réglages | noms des variables d'environnement (jamais leurs valeurs), en-têtes et redirections Vercel, `netlify.toml`, `wrangler.toml`, `_headers` |
 
-Le rôle de chaque fichier est lu dans **son premier commentaire** : un `// Ce fichier fait…` en haut de chaque fichier rend la carte bien plus parlante.
+Le rôle de chaque fichier est lu dans **son premier commentaire**, en haut du fichier ou juste sous ses imports : un `// Ce fichier fait…` rend la carte bien plus parlante, et la santé du code dit par quels fichiers commencer. Deux fichiers du même nom portent leur dossier (`data/ui`, `admin/ui`), et les dossiers `docs/`, `examples/` et `brouillons/` sont rangés à part, hors du site.
 
 ## Avec Claude Code (ou un autre assistant)
 
@@ -89,11 +89,11 @@ Pour Cursor ou un autre outil MCP : la commande `carte mcp` (ou `npx github:minh
 |---|---|
 | `overview` | la pile, les pages, les tables, le serveur, les fichiers les plus utilisés, la santé |
 | `search` | les éléments qui contiennent un mot |
-| `item` | un élément : son rôle, ce qu'il utilise, qui l'utilise, combien en dépendent |
+| `item` | un élément : son rôle, ce qu'il utilise, qui l'utilise, combien en dépendent ; si plusieurs éléments portent ce nom, la liste des candidats |
 | `who_uses` | qui l'utilise ; avec `deep`, tout ce qui peut casser si on le change |
 | `uses` | ce qu'il utilise, directement ou non |
 | `path` | la chaîne entre deux éléments, ex. page → données → script → table |
-| `health` | fichiers inutilisés, boucles d'imports, fichiers sensibles |
+| `health` | fichiers inutilisés, boucles d'imports, fichiers sensibles, fichiers à décrire en priorité |
 
 Chaque projet est relu à la demande (pas de fichier à générer) ; le paramètre `project` permet d'en viser un autre.
 
@@ -114,12 +114,12 @@ Tout se passe sur ta machine : aucune requête réseau, aucune IA, aucun compte.
 
 ## Limites
 
-L'analyse lit le code par motifs, sans le compiler : un import dont le chemin est calculé à l'exécution, ou une table nommée dans une variable, n'apparaît pas. Les liens restent fiables pour les écritures courantes ; les tests (`npm test`) couvrent quatre projets types.
+L'analyse lit le code par motifs, sans le compiler : un import dont le chemin est calculé à l'exécution, ou une table nommée dans une variable, n'apparaît pas. En Swift, un fichier est relié aux types qu'il nomme ; tout le module se voyant, il n'y a pas de boucles d'imports, et « directement ou non » s'arrête aux liens directs entre fichiers Swift. Les liens restent fiables pour les écritures courantes ; les tests (`npm test`) couvrent neuf mini-projets.
 
 ## Développer
 
 ```bash
-npm test                 # 18 tests sur 8 mini-projets (Astro + Supabase, Next.js, Flask, Express + Prisma, monorepo, Django, SvelteKit, Nuxt)
+npm test                 # 23 tests sur 9 mini-projets (Astro + Supabase, Next.js, Flask, Express + Prisma, monorepo, Django, SvelteKit, Nuxt, Swift)
 npm run demo             # la carte du mini-projet Astro, ouverte dans le navigateur
 ```
 
@@ -140,7 +140,7 @@ carte init --claude # refresh after every commit + tell Claude Code to read it f
 claude mcp add carte -s user -- carte mcp   # let Claude Code ask the map: overview, item, who_uses, uses, path, search, health
 ```
 
-Outputs in `docs/carte/`: `carte-du-code.md` (for AI assistants, condensed by folder on big projects), `carte-du-code.html` (brain, columns and folder views, search, click to light a whole chain, code health, changes since last run, filters, open in VS Code, PNG export), `carte-du-code.json`. Recognises Astro, Next.js, SvelteKit, Nuxt, Vite, React, Django, Python, Swift, shell scripts, monorepo workspaces, Supabase / SQL migrations with RLS, Prisma, Drizzle, Mongoose, Firestore, Vercel / Netlify / Cloudflare, Express, Fastify, Flask and FastAPI. Settings: `--lang`, `--out`, `--ignore`, or `.carterc.json`.
+Outputs in `docs/carte/`: `carte-du-code.md` (for AI assistants, condensed by folder on big projects), `carte-du-code.html` (brain, columns and folder views, search, click to light a whole chain, code health with the files to describe first, changes since last run, filters, open in VS Code, PNG export), `carte-du-code.json`. Recognises Astro, Next.js, SvelteKit, Nuxt, Vite, React, Django, Python, Swift, shell scripts, monorepo workspaces, Supabase / SQL migrations with RLS (and what each SQL function reads, writes and calls, triggers, policies), Prisma, Drizzle, Mongoose, Firestore, Vercel / Netlify / Cloudflare, Express, Fastify, Flask and FastAPI. Settings: `--lang`, `--out`, `--ignore`, or `.carterc.json`.
 
 ## Licence
 

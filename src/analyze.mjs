@@ -1,4 +1,4 @@
-// The analysis: from the project's files to nodes (pages, blocks, data, database, server, tools) and links.
+// The analysis: from the project's files to nodes (pages, blocks, data, database, server, tools, docs) and links.
 // No AI and no parser dependency: imports, routes, SQL migrations, Prisma models, host config and env names are read with patterns.
 import { posix } from 'node:path';
 import { scan } from './scan.mjs';
@@ -6,6 +6,12 @@ import { scan } from './scan.mjs';
 const { join, dirname, basename, normalize } = posix;
 const reEsc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const ASSET = /\.(css|scss|sass|less|svg|png|jpe?g|webp|avif|gif|ico|woff2?|otf|ttf|mp4|webm|mp3)$/;
+// the lines a file opens with before its own code, and what may follow a role comment written under them
+const IMPORT_LINE = /^\s*(?:import\b|from\s+[.\w]+\s+import\b|@testable\s+import\b|export\s+(?:type\s+)?(?:\*|\{)[^;]*\bfrom\b|(?:const|let|var)\s+[\w{},\s]+=\s*require\(\s*['"][^'"]+['"]\s*\)[\w.]*\s*;?\s*$)/;
+const MULTI_IMPORT = /^\s*(?:(?:import|export)\b[^'"]*\{[^}'"]*|from\s+[.\w]+\s+import\s*\([^)]*)$/;
+const AFTER_ROLE = /^\s*(?:$|---|import\b|export\b|from\s|@|module\.exports\b|(?:(?:public|private|internal|fileprivate|open|final|default|abstract|async|declare)\s+)*(?:struct|class|enum|extension|protocol|actor|func|def|interface|function|typealias|type\s+\w+)\b)/;
+// Swift code without its comments and strings, so a type named in a comment or a text is not a link
+const swiftCode = (s) => s.replace(/"""[\s\S]*?"""/g, '""').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '').replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
 
 export function analyze(root, cfg, t) {
   const { files: ALL, has, read, json } = scan(root, cfg.ignore);
@@ -75,8 +81,25 @@ export function analyze(root, cfg, t) {
     // a run of // or # lines counts as one comment; tool pragmas (@ts-check, eslint-disable…) are not a description
     const pragma = /^\s*(?:\/\/|#)\s*(?:@ts-|eslint|prettier|biome|jshint|global |-\*-|type: ?ignore|noqa|pylint|#?region)/;
     const lines = body.split('\n'); while (lines.length && pragma.test(lines[0])) lines.shift();
-    const m = lines.join('\n').match(/^\s*(?:((?:[ \t]*\/\/.*(?:\n|$))+)|\/\*+\s*([\s\S]*?)\*\/|((?:[ \t]*#.*(?:\n|$))+)|<!--\s*([\s\S]*?)-->|"""([\s\S]*?)"""|'''([\s\S]*?)''')/);
-    const s = (m && (m[1] || m[2] || m[3] || m[4] || m[5] || m[6]) || '').replace(/^[ \t]*(\/\/|#|\*)[ \t]?/gm, '').replace(/\s+/g, ' ').trim();
+    const COMMENT = /^\s*(?:((?:[ \t]*\/\/.*(?:\n|$))+)|\/\*+\s*([\s\S]*?)\*\/|((?:[ \t]*#.*(?:\n|$))+)|<!--\s*([\s\S]*?)-->|"""([\s\S]*?)"""|'''([\s\S]*?)''')/;
+    const m = lines.join('\n').match(COMMENT);
+    let raw = m && (m[1] || m[2] || m[3] || m[4] || m[5] || m[6]) || '';
+    if (!m) {
+      // else the comment right under the imports (Swift's `///` above the type, a note after `import type …`), when it
+      // introduces the code (a declaration, an export, a blank line) rather than one constant inside it
+      let k = 0;
+      while (k < lines.length) {
+        const l = lines[k];
+        if (!l.trim() || pragma.test(l)) { k++; continue; }
+        if (!IMPORT_LINE.test(l)) break;
+        if (MULTI_IMPORT.test(l)) while (k < lines.length - 1 && !/[})]/.test(lines[k])) k++; // on to its closing brace
+        k++;
+      }
+      const rest = lines.slice(k).join('\n');
+      const c = k ? rest.match(/\.(py|sh|command)$/.test(file) ? /^\s*((?:[ \t]*#.*\n)+)/ : /^\s*(?:((?:[ \t]*\/\/.*\n)+)|\/\*+\s*([\s\S]*?)\*\/[ \t]*\n)/) : null;
+      if (c && !/^\s*(?:\/\/\/?|\/\*+|#)\s*(?:MARK|TODO|FIXME)\b/.test(c[0]) && AFTER_ROLE.test(rest.slice(c[0].length).split('\n')[0])) raw = c[1] || c[2];
+    }
+    const s = raw.replace(/^[ \t]*(\/{2,3}|#|\*)[ \t]?/gm, '').replace(/\s+/g, ' ').trim();
     if (s.length <= 160) return s;
     // long comments: up to the last full sentence that fits, else cut at a word
     const end = s.lastIndexOf('. ', 160);
@@ -113,6 +136,7 @@ export function analyze(root, cfg, t) {
     if (routeOf(full) !== null) return 'page';
     if (endpointOf(full) !== null) return 'server';
     const f = inWs(full);
+    if (/^(docs?|examples?|brouillons|drafts)\//.test(f)) return 'doc'; // drafts and examples, not part of the site
     if (/(^|\/)(data|content|i18n|locales|fixtures)\//.test(f) || /\.json$/.test(f)) return 'data';
     if (/^(scripts|tools|bin)\//.test(f) || /\/scripts\//.test(f) || /\.(config)\.(m?[jt]s|cjs)$/.test(f) || /\.(sh|command)$/.test(f)) return 'tool';
     if (f.endsWith('.py') && (/__name__\s*==\s*['"]__main__['"]/.test(text) || /@\w+\.(route|get|post|put|patch|delete)\(/.test(text))) return 'page';
@@ -192,8 +216,10 @@ export function analyze(root, cfg, t) {
     return null;
   }
   const dataNode = (f) => { if (!nodes.has(f)) node(f, { col: 'data', file: f, label: basename(f), desc: '' }); return f; };
+  // Swift: the whole module sees every type, so a file uses the files that declare the types it names
+  const swift = new Map([...texts].filter(([f]) => f.endsWith('.swift')).map(([f, s]) => [f, swiftCode(s)]));
   const swiftTypes = new Map();
-  for (const [f, s] of texts) if (f.endsWith('.swift')) for (const m of s.matchAll(/\b(?:class|struct|enum|protocol|actor)\s+([A-Z]\w+)/g)) swiftTypes.set(m[1], f);
+  for (const [f, s] of swift) for (const m of s.matchAll(/\b(?:class|struct|enum|protocol|actor)\s+([A-Z]\w+)/g)) swiftTypes.set(m[1], f);
 
   for (const [f, s] of texts) {
     if (/\.(astro|tsx?|jsx?|mjs|cjs|mts|cts|svelte|vue)$/.test(f)) {
@@ -210,7 +236,10 @@ export function analyze(root, cfg, t) {
         else for (const n of m[4].split(',')) { const t2 = pyResolve(f, n.trim().split(/\s/)[0]); if (t2) link(f, t2); }
       }
     } else if (f.endsWith('.swift')) {
-      for (const [type, file] of swiftTypes) if (file !== f && new RegExp(`\\b${type}\\b`).test(s)) link(f, file);
+      const code = swift.get(f);
+      for (const name of new Set(code.match(/\b[A-Z]\w+/g))) { const file = swiftTypes.get(name); if (file && file !== f) link(f, file); }
+      // `extension Store { … }` in another file is part of Store: whoever uses Store uses it too
+      for (const m of code.matchAll(/^[ \t]*(?:(?:public|internal|private|fileprivate)\s+)?extension\s+([A-Z]\w+)/gm)) { const file = swiftTypes.get(m[1]); if (file && file !== f) link(file, f, 'extended by'); }
     } else if (/\.html?$/.test(f)) {
       for (const m of s.matchAll(/<(?:script|link)[^>]+(?:src|href)=["']([^"':]+)["']|<a[^>]+href=["']([^"':#?]+\.html?)["']/g)) {
         const spec = m[1] || m[2];
@@ -262,7 +291,7 @@ export function analyze(root, cfg, t) {
   }
 
   // ---------- database: SQL migrations (Supabase, Postgres) ----------
-  const tables = new Map(), fns = new Map(), jobs = [], buckets = new Set();
+  const tables = new Map(), fns = new Map(), jobs = [], buckets = new Set(), triggers = [], policies = [];
   for (const f of ALL.filter((x) => x.endsWith('.sql')).sort()) {
     let sql = read(f).replace(/--.*$/gm, '');
     // foreach t in array array['a','b'] loop execute format('... %I ...', t); end loop -> one statement per table
@@ -270,21 +299,27 @@ export function analyze(root, cfg, t) {
       const names = [...m[1].matchAll(/'(\w+)'/g)].map((x) => x[1]);
       for (const fm of m[2].matchAll(/format\(\s*'((?:[^']|'')*)'/g)) for (const n of names) sql += '\n' + fm[1].replace(/''/g, "'").replace(/%I/g, n) + ';';
     }
-    for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:public\.)?"?(\w+)"?/gi)) if (!tables.has(m[1])) tables.set(m[1], { name: m[1], rls: false, read: new Set(), write: new Set(), file: f });
-    for (const m of sql.matchAll(/drop\s+table\s+(?:if\s+exists\s+)?(?:public\.)?"?(\w+)"?/gi)) tables.delete(m[1]);
-    for (const m of sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(?:public\.)?"?(\w+)"?\s+enable\s+row\s+level\s+security/gi)) if (tables.has(m[1])) tables.get(m[1]).rls = true;
-    for (const m of sql.matchAll(/create\s+policy\s+(?:"[^"]*"|\w+)\s+on\s+(?:public\.)?"?(\w+)"?\s*(?:as\s+\w+\s*)?(?:for\s+(\w+)\s*)?(?:to\s+([\w\s,]+?))?\s*(using|with\s+check)\s*\(([\s\S]*?)\)\s*;/gi)) {
+    for (const m of sql.matchAll(/create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?(\w+)"?/gi)) if (!tables.has(m[1])) tables.set(m[1], { name: m[1], rls: false, read: new Set(), write: new Set(), file: f });
+    for (const m of sql.matchAll(/drop\s+table\s+(?:if\s+exists\s+)?(?:"?public"?\.)?"?(\w+)"?/gi)) tables.delete(m[1]);
+    for (const m of sql.matchAll(/alter\s+table\s+(?:if\s+exists\s+)?(?:"?public"?\.)?"?(\w+)"?\s+enable\s+row\s+level\s+security/gi)) if (tables.has(m[1])) tables.get(m[1]).rls = true;
+    for (const m of sql.matchAll(/create\s+policy\s+(?:"[^"]*"|\w+)\s+on\s+(?:"?public"?\.)?"?(\w+)"?\s*(?:as\s+\w+\s*)?(?:for\s+(\w+)\s*)?(?:to\s+([\w\s,"]+?))?\s*(using|with\s+check)\s*\(([\s\S]*?)\)\s*;/gi)) {
       const tb = tables.get(m[1]); if (!tb) continue;
-      const who = /is_editor|editor|is_admin|admin/i.test(m[5]) ? t('db.editors') : /auth\.uid\(\)/.test(m[5]) ? t('db.owner') : (m[3] || 'public').trim().replace(/\s+/g, ' ');
+      const who = /is_editor|editor|is_admin|admin/i.test(m[5]) ? t('db.editors') : /auth\.uid\(\)/.test(m[5]) ? t('db.owner') : (m[3] || 'public').replace(/"/g, '').trim().replace(/\s+/g, ' ');
       const cmd = (m[2] || 'all').toLowerCase();
       if (cmd === 'select' || cmd === 'all') tb.read.add(who);
       if (cmd !== 'select') tb.write.add(who);
+      policies.push([m[1], m[5]]);
     }
-    for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?"?(\w+)"?\s*\(/gi)) {
-      const head = sql.slice(m.index, m.index + 800);
-      fns.set(m[1], { name: m[1], definer: /security\s+definer/i.test(head.split(/\$\$|\$\w+\$/)[0] + (head.split(/\$\$|\$\w+\$/)[2] || '')), file: f });
+    for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:"?public"?\.)?"?(\w+)"?\s*\(/gi)) {
+      // its body: the text between its dollar quotes ($$ … $$ or $fn$ … $fn$), found before the statement ends;
+      // "security definer" is looked for around the body, up to the end of this statement only
+      const q = /\$\w*\$|;/.exec(sql.slice(m.index)), start = q && q[0] !== ';' ? m.index + q.index + q[0].length : -1, end = start < 0 ? -1 : sql.indexOf(q[0], start);
+      const around = end > start ? sql.slice(m.index, start) + sql.slice(end, (sql.indexOf(';', end) + 1 || sql.length + 1) - 1) : sql.slice(m.index, m.index + 800).split(';')[0];
+      fns.set(m[1], { name: m[1], definer: /security\s+definer/i.test(around), file: f, body: end > start ? sql.slice(start, end) : '' });
     }
-    for (const m of sql.matchAll(/cron\.schedule\(\s*'([^']+)'\s*,\s*'([^']+)'/gi)) jobs.push({ name: m[1], when: m[2], file: f, sql });
+    for (const m of sql.matchAll(/alter\s+function\s+(?:"?public"?\.)?"?(\w+)"?[^;]*?\bsecurity\s+definer/gi)) if (fns.has(m[1])) fns.get(m[1]).definer = true;
+    for (const m of sql.matchAll(/create\s+(?:or\s+replace\s+)?(?:constraint\s+)?trigger\s+"?\w+"?\s[^;]*?\bon\s+(?:"?public"?\.)?"?(\w+)"?[^;]*?execute\s+(?:function|procedure)\s+(?:"?public"?\.)?"?(\w+)"?\s*\(/gi)) triggers.push([m[1], m[2]]);
+    for (const m of sql.matchAll(/cron\.schedule\(\s*'([^']+)'\s*,\s*'([^']+)'\s*(?:,\s*(\$\w*\$[\s\S]*?\$\w*\$|'(?:[^']|'')*'))?/gi)) jobs.push({ name: m[1], when: m[2], file: f, sql, cmd: m[3] || '' });
     for (const m of sql.matchAll(/insert\s+into\s+storage\.buckets[\s\S]*?values\s*\(\s*'([\w-]+)'/gi)) buckets.add(m[1]);
   }
   const admin = t('db.editors');
@@ -295,6 +330,18 @@ export function analyze(root, cfg, t) {
   for (const fn of fns.values()) node(`rpc:${fn.name}`, { col: 'db', label: `${fn.name}()`, file: fn.file, desc: fn.definer ? t('db.definer') : t('db.fn') });
   for (const b of buckets) node(`bucket:${b}`, { col: 'db', label: b, desc: t('db.bucket') });
   for (const j of jobs) node(`job:${j.name}`, { col: 'server', label: `${t('task')} ${j.name} : ${cronText(j.when, t)}`, file: j.file, desc: t('task.pg', { cron: j.when }) });
+  // inside the database: the tables a function (or a pg_cron job) reads and writes, the functions it calls,
+  // the triggers that run a function when a table changes, the policies that check a function
+  const tableRef = /\b(?:from|join|into|update|truncate)\s+(?:only\s+)?(?:"?public"?\.)?"?(\w+)"?/gi;
+  const fnRef = fns.size && new RegExp(`(?:"?public"?\\.)?"?\\b(${[...fns.keys()].map(reEsc).join('|')})"?\\s*\\(`, 'g');
+  const sqlUses = (id, code, self) => {
+    for (const m of code.matchAll(tableRef)) if (tables.has(m[1])) link(id, `table:${m[1]}`, 'reads/writes');
+    if (fnRef) for (const m of code.matchAll(fnRef)) if (m[1] !== self) link(id, `rpc:${m[1]}`, 'calls');
+  };
+  for (const fn of fns.values()) sqlUses(`rpc:${fn.name}`, fn.body, fn.name);
+  for (const j of jobs) sqlUses(`job:${j.name}`, j.cmd);
+  for (const [tb, fn] of triggers) link(`table:${tb}`, `rpc:${fn}`, 'triggers');
+  if (fnRef) for (const [tb, expr] of policies) for (const m of expr.matchAll(fnRef)) link(`table:${tb}`, `rpc:${m[1]}`, 'calls');
 
   // Prisma models
   const models = [];
@@ -396,7 +443,29 @@ export function analyze(root, cfg, t) {
   for (const f of ['netlify.toml', 'wrangler.toml']) if (has(f)) host.push(t('host.file', { f }));
   for (const f of ALL.filter((x) => /(^|\/)_(headers|redirects)$/.test(x))) host.push(t('host.file', { f }));
 
+  // files with the same name (src/data/ui.ts, src/scripts/admin/ui.ts) get as much of their folder as tells them apart: data/ui, admin/ui
+  const byLabel = new Map();
+  for (const n of nodes.values()) (byLabel.get(n.label) || byLabel.set(n.label, []).get(n.label)).push(n);
+  for (const list of byLabel.values()) {
+    const same = list.filter((n) => n.id === n.file && n.label === short(n.file));
+    if (list.length < 2 || !same.length) continue;
+    const others = new Set(list.filter((n) => !same.includes(n)).map((n) => n.label));
+    const dirs = same.map((n) => (dirname(n.file) === '.' ? [] : dirname(n.file).split('/')));
+    // folders first; when the folders are the same too (Card.astro, Card.tsx), the extension
+    const at = (k, ext) => same.map((n, i) => [...dirs[i].slice(Math.max(0, dirs[i].length - k)), ext ? basename(n.file) : n.label.split('/').pop()].join('/'));
+    const ok = (l) => new Set(l).size === same.length && !l.some((x) => others.has(x));
+    const deepest = Math.max(...dirs.map((d) => d.length));
+    const tries = [...Array.from({ length: deepest }, (_, i) => at(i + 1, false)), ...Array.from({ length: deepest + 1 }, (_, i) => at(i, true))];
+    (tries.find(ok) || tries.at(-1)).forEach((l, i) => { same[i].label = l; });
+  }
+
   const E = [...edges].map((e) => { const [from, to, type] = e.split('\u0000'); return { from, to, type }; });
+  // a script nobody imports that reads its command line (node pdf.mjs <file>) is a command, not a building block
+  const imported = new Set(E.filter((e) => e.type === 'uses').map((e) => e.to));
+  for (const n of nodes.values()) if (n.col === 'bloc' && !imported.has(n.id) && /\.(m?[jt]s|cjs|py)$/.test(n.id)) {
+    const s = texts.get(n.id) || '';
+    if (/^#!/.test(s) || /\bprocess\.argv\b|\bsys\.argv\b|require\.main\s*===\s*module|import\.meta\.main\b/.test(s)) n.col = 'tool';
+  }
   for (const e of E) nodes.get(e.to).uses++;
   return { name: cfg.title || pkg.name || basename(root), kinds, web: WEB, nodes: [...nodes.values()], edges: E, env, host, files: ALL.length };
 }

@@ -3,3 +3,4 @@ const SB = 'https://x.supabase.co';
 export async function soldOut(id: string) { await fetch('/api/staff', { method: 'POST', body: id }); }
 export const ok = () => fetch(SB + '/rest/v1/rpc/is_editor', { method: 'POST' });
 export const list = () => fetch(`${SB}/rest/v1/dishes?order=position`);
+export const stamp = (phone: string) => fetch(SB + '/rest/v1/rpc/visit', { method: 'POST', body: phone });

@@ -56,8 +56,10 @@ function relPath(roots, name) {
 }
 
 function need({ q, roots }, name, label = 'item') {
-  const n = q.find(relPath(roots, name));
-  if (n) return n;
+  const hits = q.matches(relPath(roots, name));
+  if (hits.length === 1) return hits[0];
+  // several items share that name: say which ones rather than answer about the wrong one
+  if (hits.length > 1) throw new Error(`"${name}" matches ${hits.length} items; ask again with one of these ids:\n${hits.slice(0, 15).map((n) => `- ${n.id} : ${n.label} [${n.col}]${n.desc ? ` : ${n.desc}` : ''}`).join('\n')}${hits.length > 15 ? `\n… +${hits.length - 15}` : ''}`);
   const close = q.search(String(name).split('/').pop().replace(/\.\w+$/, ''), 5);
   throw new Error(`No ${label} matches "${name}".${close.length ? ` Close matches:\n${list(close)}` : ''}`);
 }
@@ -70,10 +72,10 @@ function call(name, a = {}) {
       const pick = (c, max = 40) => list(map.nodes.filter((n) => n.col === c).sort((x, y) => (x.route ?? x.label).localeCompare(y.route ?? y.label)), max);
       const h = q.health();
       return [`Project ${map.name} · stack: ${map.kinds.join(', ') || 'unknown'} · ${map.nodes.length} items, ${map.edges.length} links`,
-        `Columns (page → bloc → data → db → server → tool): ${count}`,
+        `Columns (page → bloc → data → db → server → tool → doc): ${count}`,
         `\nPages / entry points:\n${pick('page')}`, `\nDatabase:\n${pick('db')}`, `\nServer and jobs:\n${pick('server')}`,
         `\nMost used:\n${list([...map.nodes].sort((x, y) => y.uses - x.uses).slice(0, 10))}`,
-        `\nHealth: ${h.unused.length} maybe unused, ${h.cycles.length} import cycle(s), sensitive: ${h.sensitive.slice(0, 5).map((x) => `${x.n.label} (${x.count})`).join(', ') || 'none'}`,
+        `\nHealth: ${h.unused.length} maybe unused, ${h.cycles.length} import cycle(s), ${h.undescribed.total} file(s) without a role comment, sensitive: ${h.sensitive.slice(0, 5).map((x) => `${x.n.label} (${x.count})`).join(', ') || 'none'}`,
         map.env.size ? `\nEnv names: ${[...map.env.keys()].sort().join(', ')}` : ''].join('\n');
     }
     case 'search': return list(q.search(a.query, Number(a.limit) || 20));
@@ -93,7 +95,8 @@ function call(name, a = {}) {
       const h = q.health();
       return [`Maybe unused (no file imports them) (${h.unused.length}):\n${list(h.unused, 100)}`,
         `\nImport cycles (${h.cycles.length}):\n${h.cycles.map((c) => '- ' + c.map((n) => n.label).join(' ↔ ')).join('\n') || '(none)'}`,
-        `\nSensitive files (most dependents):\n${h.sensitive.map((x) => `- ${x.n.label} (${x.n.file}) : ${x.count}`).join('\n') || '(none)'}`].join('\n');
+        `\nSensitive files (most dependents):\n${h.sensitive.map((x) => `- ${x.n.label} (${x.n.file}) : ${x.count}, ${x.direct} directly`).join('\n') || '(none)'}`,
+        `\nWithout a role comment (${h.undescribed.total}), the most used first: a one-line comment at the top of each makes the map clearer:\n${h.undescribed.top.map((x) => `- ${x.n.file} (${x.users} user${x.users > 1 ? 's' : ''})`).join('\n') || '(none)'}`].join('\n');
     }
     default: throw new Error(`Unknown tool: ${name}`);
   }

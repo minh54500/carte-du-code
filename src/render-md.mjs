@@ -1,5 +1,5 @@
 // The Markdown map: what an AI assistant reads first, compact and grouped by column.
-export const COLUMNS = ['page', 'bloc', 'data', 'db', 'server', 'tool'];
+export const COLUMNS = ['page', 'bloc', 'data', 'db', 'server', 'tool', 'doc'];
 export const columnTitle = (col, web, t) => t(col === 'page' ? (web ? 'col.page' : 'col.entry') : `col.${col}`);
 
 export function renderMarkdown(map, t, { date, htmlPath, health, changes, condensed = false, detail = '' }) {
@@ -19,7 +19,9 @@ export function renderMarkdown(map, t, { date, htmlPath, health, changes, conden
     L.push(`## ${t('health.title')}`, '');
     L.push(`- ${t('health.unused', { n: health.unused.length })}${health.unused.length ? ' : ' + health.unused.slice(0, 25).map((n) => '`' + n.file + '`').join(', ') + (health.unused.length > 25 ? ' …' : '') : ''}`);
     L.push(`- ${t('health.cycles', { n: health.cycles.length })}${health.cycles.length ? ' : ' + health.cycles.slice(0, 8).map((c) => c.length > 8 ? `${c.slice(0, 6).map((n) => n.label).join(' ↔ ')} ↔ … (${c.length})` : c.map((n) => n.label).join(' ↔ ')).join(' · ') : ''}`);
-    L.push(`- ${t('health.sensitive')} : ${health.sensitive.length ? health.sensitive.map((x) => t('health.sensitiveItem', { label: x.n.label, n: x.count })).join(' · ') : t('health.ok')}`, '');
+    L.push(`- ${t('health.sensitive')} : ${health.sensitive.length ? health.sensitive.map((x) => t(x.direct < x.count ? 'health.sensitiveItemDirect' : 'health.sensitiveItem', { label: x.n.label, n: x.count, d: x.direct })).join(' · ') : t('health.ok')}`);
+    if (health.undescribed?.top.length) L.push(`- ${t('health.undescribed', { n: health.undescribed.total })} : ${health.undescribed.top.map((x) => '`' + x.n.file + '`').join(', ')}`);
+    L.push('');
   }
   if (condensed) {
     // big projects: one line per folder, the per-file detail lives in its own file

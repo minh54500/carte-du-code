@@ -1,3 +1,4 @@
 node_modules/
 docs/carte/
 .DS_Store
+.claude/

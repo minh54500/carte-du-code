@@ -10,6 +10,7 @@ import { generate } from '../src/generate.mjs';
 import { index } from '../src/query.mjs';
 import { handle } from '../src/mcp.mjs';
 import { i18n } from '../src/i18n.mjs';
+import { renderMarkdown } from '../src/render-md.mjs';
 import { DEFAULTS } from '../src/config.mjs';
 
 const FIX = fileURLToPath(new URL('./fixtures/', import.meta.url));
@@ -131,4 +132,85 @@ test('MCP over stdio: one JSON message per line in, one per line out, survives b
   const lines = execFileSync('node', [bin, 'mcp', join(FIX, 'monorepo')], { input, encoding: 'utf8' }).trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(lines.length, 3, 'a bad line gets an error and the server goes on');
   assert.match(lines[2].result.content[0].text, /orphan/);
+});
+
+test('Supabase: what each SQL function reads and writes, the functions it calls, triggers and policies', () => {
+  const m = map('astro-supabase');
+  assert.ok(linked(m, 'rpc:visit', 'table:visits', 'reads/writes'));
+  assert.ok(linked(m, 'rpc:visit', 'table:customers', 'reads/writes'));
+  assert.ok(linked(m, 'rpc:visit', 'rpc:norm', 'calls'));
+  assert.ok(linked(m, 'table:visits', 'rpc:touch', 'triggers'));
+  assert.ok(linked(m, 'table:dishes', 'rpc:is_editor', 'calls'), 'a policy written in a format() loop checks the function');
+  assert.equal(node(m, 'rpc:norm').desc, 'fonction', '"security definer" of the next function is not read as this one’s');
+  assert.equal(node(m, 'rpc:visit').desc, 'fonction security definer');
+  assert.ok(!node(m, 'table:public'), 'quoted names as supabase db diff writes them: "public"."orders"');
+  assert.match(node(m, 'table:orders').desc, /RLS activé · lecture : authenticated/);
+  assert.ok(linked(m, 'rpc:order_count', 'table:orders'));
+  assert.equal(node(m, 'rpc:order_count').desc, 'fonction security definer', 'set later by alter function');
+  const p = index(m).path('src/pages/admin.astro', 'table:customers').map((n) => n.id);
+  assert.deepEqual(p, ['src/pages/admin.astro', 'src/scripts/admin.ts', 'rpc:visit', 'table:customers'], 'page → script → function → table');
+});
+
+test('Swift: types named in the code (not in comments or texts), extensions, no import cycles', () => {
+  const m = map('swift-app');
+  assert.ok(linked(m, 'Store.swift', 'StoreActions.swift', 'extended by'), 'extension Store is part of Store');
+  assert.ok(linked(m, 'ContentView.swift', 'Store.swift'));
+  assert.ok(!linked(m, 'ContentView.swift', 'Theme.swift'), 'Theme only appears in a comment and a text');
+  assert.equal(node(m, 'StoreActions.swift').desc, 'The actions on the shelf: keep a file, empty the shelf.', '/// under the imports');
+  const h = index(m).health();
+  assert.deepEqual(h.unused.map((n) => n.id), ['Theme.swift']);
+  assert.deepEqual(h.cycles, [], 'types that name each other are not an import cycle');
+  assert.deepEqual([h.sensitive[0].n.id, h.sensitive[0].count, h.sensitive[0].direct], ['Store.swift', 3, 3]);
+  assert.deepEqual(index(m).usedBy('StoreActions.swift', true).map((n) => n.id).sort(), ['App.swift', 'ContentView.swift', 'Store.swift'], 'whoever uses Store uses its extension');
+  assert.equal(node(m, 'Theme.swift').desc, '', '#if and // MARK: are not a role');
+  assert.deepEqual(h.undescribed.top.map((x) => x.n.id), ['Store.swift']);
+});
+
+test('names: files with the same name get their folder, and a question on a shared name lists the candidates', () => {
+  const m = map('astro-supabase');
+  assert.equal(node(m, 'src/data/ui.ts').label, 'data/ui');
+  assert.equal(node(m, 'src/scripts/admin/ui.ts').label, 'admin/ui');
+  assert.equal(node(m, 'src/components/Header.astro').label, 'Header', 'a unique name stays short');
+  const q = index(m);
+  assert.deepEqual(q.matches('ui').map((n) => n.id).sort(), ['src/data/ui.ts', 'src/scripts/admin/ui.ts']);
+  assert.equal(q.find('admin/ui').id, 'src/scripts/admin/ui.ts');
+  assert.deepEqual(q.matches('data/menu').map((n) => n.id), ['src/data/menu.ts'], 'a path without its extension');
+  const ex = index(map('express-prisma')), dj = index(map('django'));
+  assert.deepEqual(ex.matches('server.js').map((n) => n.id), ['src/server.js'], 'the file, not the routes it declares');
+  assert.deepEqual(dj.matches('models.py').map((n) => n.id), ['shop/models.py'], 'the file, not its models');
+  const w = handle({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'who_uses', arguments: { project: join(FIX, 'express-prisma'), item: 'server.js' } } }).result;
+  assert.ok(!w.isError, 'who_uses "server.js" answers as in 1.1.1');
+  assert.match(w.content[0].text, /npm run start/);
+  const r = handle({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'item', arguments: { project: join(FIX, 'astro-supabase'), item: 'ui' } } }).result;
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /matches 2 items[\s\S]*src\/data\/ui\.ts[\s\S]*src\/scripts\/admin\/ui\.ts/);
+});
+
+test('roles under the imports, command-line scripts, drafts, the files to describe first', () => {
+  const m = map('astro-supabase');
+  assert.equal(node(m, 'src/data/ui.ts').desc, 'Which card design the menu uses (a comment under the import).');
+  assert.equal(node(m, 'src/scripts/admin/ui.ts').desc, 'Small helpers of the admin screen (a comment under a multi-line import).');
+  assert.equal(node(m, 'docs/brouillons/legal.ts').col, 'doc');
+  const h = index(m).health();
+  assert.ok(!h.unused.some((n) => n.id === 'docs/brouillons/legal.ts'));
+  assert.equal(h.undescribed.top[0].n.id, 'src/layouts/Base.astro');
+  const ex = map('express-prisma');
+  assert.equal(node(ex, 'src/seed.js').col, 'tool', 'reads its command line and nobody imports it');
+  assert.equal(node(ex, 'src/seed.js').desc, 'Fills the database with sample users: node src/seed.js <count>');
+  assert.equal(node(ex, 'src/db.js').col, 'bloc');
+  const md = renderMarkdown(m, i18n('fr').t, { date: '', htmlPath: '', health: h });
+  assert.match(md, /## Documents et brouillons \(1\)/);
+  assert.match(md, /À décrire en priorité \(\d+ fichiers sans commentaire en tête\) : les plus utilisés : `src\/layouts\/Base\.astro`/);
+});
+
+test('a role is the comment that introduces the code, not one inside it; same name in the same folder keeps its extension', () => {
+  const dir = copy('astro-supabase');
+  writeFileSync(join(dir, 'src/pages/lieu.astro'), "---\nimport Base from '../layouts/Base.astro';\n// The week from Monday.\nconst names = ['lun', 'mar'];\n---\n<Base />\n");
+  writeFileSync(join(dir, 'src/consts.py'), 'import os\n\n# constants\nLIMIT = 3\n');
+  writeFileSync(join(dir, 'src/server.js'), "const http = require('http');\nconst server = http.createServer((req, res) => {\n  // answers every request\n  res.end('ok');\n});\n");
+  writeFileSync(join(dir, 'src/components/Card.astro'), '---\n// A card.\n---\n<div />\n');
+  writeFileSync(join(dir, 'src/components/Card.tsx'), '// A card, in React.\nexport default () => null;\n');
+  const m = analyze(dir, { ...DEFAULTS }, i18n('fr').t);
+  for (const f of ['src/pages/lieu.astro', 'src/consts.py', 'src/server.js']) assert.equal(node(m, f).desc, '', f);
+  assert.deepEqual([node(m, 'src/components/Card.astro').label, node(m, 'src/components/Card.tsx').label], ['Card.astro', 'Card.tsx']);
 });
