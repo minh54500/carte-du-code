@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>carte-du-code</title>
+<meta name="description" content="La carte de ton code en une commande : pages, composants, données, base, serveur et outils, avec qui utilise quoi. Pour ton assistant IA et pour toi.">
+<style>
+  :root { --bg: #0b1020; --panel: #141a30; --line: #2a3352; --ink: #e8ecf8; --mute: #9aa3c0; --accent: #7aa2ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: radial-gradient(1200px 600px at 70% -10%, #1b2550, var(--bg)); color: var(--ink); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; min-height: 100vh; }
+  main { max-width: 860px; margin: 0 auto; padding: 56px 16px 64px; }
+  h1 { font-size: clamp(2rem, 6vw, 3rem); margin: 0 0 8px; letter-spacing: -0.02em; }
+  .lead { color: var(--mute); font-size: 1.1rem; margin: 0 0 32px; max-width: 60ch; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-bottom: 32px; }
+  a.card { display: block; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: inherit; text-decoration: none; transition: border-color .2s, transform .2s; }
+  a.card:hover, a.card:focus-visible { border-color: var(--accent); transform: translateY(-2px); outline: none; }
+  a.card strong { display: block; font-size: 1.1rem; margin-bottom: 4px; }
+  a.card span { color: var(--mute); font-size: .95rem; }
+  .en { font-size: .85rem; margin-top: 10px; display: inline-block; color: var(--accent); }
+  pre { background: #070b18; border: 1px solid var(--line); border-radius: 12px; padding: 16px; overflow-x: auto; font-size: .9rem; }
+  footer { color: var(--mute); font-size: .9rem; margin-top: 32px; }
+  a { color: var(--accent); }
+  @media (prefers-reduced-motion: reduce) { a.card { transition: none; } a.card:hover { transform: none; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>carte-du-code</h1>
+  <p class="lead">La carte de ton code en une commande : pages, composants, données, base, serveur et outils, avec qui utilise quoi. Un fichier pour ton assistant IA, un graphe « cerveau » pour toi. <span lang="en">Your project's code map in one command.</span></p>
+
+  <div class="cards">
+    <a class="card" href="exemple.html"><strong>Exemple : un site de restaurant</strong><span>Astro + Supabase + Vercel : pages, tables avec leurs droits, fonctions serveur, tâches planifiées.</span></a>
+    <a class="card" href="carte.html"><strong>La carte de cet outil</strong><span>carte-du-code sur lui-même : ses modules, qui utilise quoi, les fichiers sensibles.</span></a>
+  </div>
+  <p><span class="en" lang="en">English: <a href="example.html">restaurant example</a> · <a href="map.html">this tool's map</a></span></p>
+
+  <p>Clic sur un point : tout son chemin s'allume. Essaie <b>Colonnes</b>, <b>Santé</b> et la recherche.</p>
+  <pre><code>npx github:minh54500/carte-du-code          # la carte du dossier courant, dans docs/carte/
+claude mcp add carte -s user -- carte mcp   # Claude Code interroge la carte directement</code></pre>
+
+  <footer>Zéro dépendance, rien ne sort de ta machine. <a href="https://github.com/minh54500/carte-du-code">Code et mode d'emploi sur GitHub</a> · MIT © BUI VAN Minh</footer>
+</main>
+</body>
+</html>
