@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.1 (2026-10-21)
+
+Fixes from a full code review of 1.1.0.
+
+- Monorepos: no more crash on nested `"exports"` conditions (tsup, unbuild); subpath imports (`@repo/ui/button` through `"exports": { "./*": … }`), `$lib/` in a SvelteKit app of the workspace, `~/` and `@/` in Nuxt (and Nuxt 4's `app/` folder).
+- "Maybe unused" leaves out the files the framework loads by itself: Django migrations, `admin.py`, `apps.py`; Next `_app`, `not-found`, `sitemap`…; SvelteKit hooks and `+error`; Astro content config; Nuxt auto-imported folders.
+- Django routes carry the prefix of their `include()`; a route `/` no longer links every file that contains a slash.
+- Windows line endings and accented file names (`mentions-légales.astro`) are read correctly.
+- MCP server: a malformed line gets an error and the server goes on; batches; unknown tool and missing arguments as JSON-RPC errors; absolute and Windows paths understood; refuses a home folder or a whole disk.
+- "Who uses" gives the same direction directly and with `deep`. Firestore is only looked for in Firebase projects.
+- Graph: folder colours stay the same from one map to the next; compact bar and touch help on phones; labels no longer overlap; sensitive files leave tests out of the count.
+- Faster on big projects (patterns built once; a 1,500-file import loop with 100 tables: 0.9 s → 0.3 s).
+- A `.carterc.json` cannot send the output outside its project. VS Code links work for folders with `#` or `?`.
+
 ## 1.1.0 (2026-10-21)
 
 - `carte mcp`: MCP server, so an AI assistant asks the map directly (`overview`, `search`, `item`, `who_uses`, `uses`, `path`, `health`) instead of reading the whole file.
@@ -10,7 +24,7 @@
 - Monorepos (npm, yarn and pnpm workspaces): packages imported by name, routes named after their app.
 - Django (models, urls.py), Drizzle, Firestore, Mongoose; Next.js layouts, SvelteKit layouts and load files, Nuxt layouts and server routes.
 - The path between two items follows the real dependencies first (page → data → script → table).
-- 17 tests on 8 small projects.
+- 17 tests on 8 small projects (18 since 1.1.1).
 
 ## 1.0.0 (2026-10-21)
 

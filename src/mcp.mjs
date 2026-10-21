@@ -1,7 +1,8 @@
 // MCP server (stdio): lets an AI assistant ask the map questions directly instead of reading the whole Markdown.
 // Newline-delimited JSON-RPC 2.0 on stdin/stdout; logs go to stderr only.
-import { resolve } from 'node:path';
-import { existsSync, readFileSync } from 'node:fs';
+import { resolve, parse } from 'node:path';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.mjs';
 import { mapOf } from './generate.mjs';
@@ -35,10 +36,11 @@ const cache = new Map();
 function load(dir) {
   const root = resolve(dir || process.cwd());
   if (!existsSync(root)) throw new Error(`Folder not found: ${root}`);
+  if (root === parse(root).root || root === homedir()) throw new Error(`${root} is not a project folder: pass the project's own folder.`);
   const hit = cache.get(root);
   if (hit && Date.now() - hit.at < 3000) return hit;
   const map = mapOf(root, loadConfig(root));
-  const entry = { at: Date.now(), map, q: index(map) };
+  const entry = { at: Date.now(), map, q: index(map), roots: [...new Set([root, realpathSync(root)])] };
   cache.set(root, entry);
   return entry;
 }
@@ -46,15 +48,22 @@ function load(dir) {
 const line = (n) => `- ${n.label}${n.file && n.file !== n.label ? ` (${n.file})` : ''} [${n.col}]${n.desc ? ` : ${n.desc}` : ''}`;
 const list = (nodes, max = 60) => nodes.length ? nodes.slice(0, max).map(line).join('\n') + (nodes.length > max ? `\n… +${nodes.length - max}` : '') : '(none)';
 
-function need(q, name, label = 'item') {
-  const n = q.find(name);
+// Assistants often pass absolute or Windows paths: bring them back to the project's own relative path.
+function relPath(roots, name) {
+  let s = String(name ?? '').replace(/\\/g, '/').replace(/^\.\//, '');
+  for (const r of roots) { const p = r.replace(/\\/g, '/') + '/'; if (s.startsWith(p)) return s.slice(p.length); }
+  return s;
+}
+
+function need({ q, roots }, name, label = 'item') {
+  const n = q.find(relPath(roots, name));
   if (n) return n;
   const close = q.search(String(name).split('/').pop().replace(/\.\w+$/, ''), 5);
   throw new Error(`No ${label} matches "${name}".${close.length ? ` Close matches:\n${list(close)}` : ''}`);
 }
 
 function call(name, a = {}) {
-  const { map, q } = load(a.project);
+  const loaded = load(a.project), { map, q } = loaded;
   switch (name) {
     case 'overview': {
       const count = COLUMNS.map((c) => `${c}: ${map.nodes.filter((n) => n.col === c).length}`).join(' · ');
@@ -69,15 +78,15 @@ function call(name, a = {}) {
     }
     case 'search': return list(q.search(a.query, Number(a.limit) || 20));
     case 'item': {
-      const n = need(q, a.item);
+      const n = need(loaded, a.item);
       return [line(n).slice(2), n.route ? `route: ${n.route}` : '', n.endpoint ? `endpoint: ${n.endpoint}` : '', n.badge ? `badge: ${n.badge}` : '',
         `\nUses:\n${list(q.uses(n.id))}`, `\nUsed by:\n${list(q.usedBy(n.id))}`,
         `\n${q.usedBy(n.id, true).length} item(s) depend on it directly or not; it depends on ${q.uses(n.id, true).length}.`].filter(Boolean).join('\n');
     }
-    case 'who_uses': { const n = need(q, a.item); return `${a.deep ? 'Everything that depends on' : 'Used by'} ${n.label}:\n${list(q.usedBy(n.id, !!a.deep), 200)}`; }
-    case 'uses': { const n = need(q, a.item); return `${a.deep ? 'Everything' : 'What'} ${n.label} ${a.deep ? 'depends on' : 'uses'}:\n${list(q.uses(n.id, !!a.deep), 200)}`; }
+    case 'who_uses': { const n = need(loaded, a.item); return `${a.deep ? 'Everything that depends on' : 'Used by'} ${n.label}:\n${list(q.usedBy(n.id, !!a.deep), 200)}`; }
+    case 'uses': { const n = need(loaded, a.item); return `${a.deep ? 'Everything' : 'What'} ${n.label} ${a.deep ? 'depends on' : 'uses'}:\n${list(q.uses(n.id, !!a.deep), 200)}`; }
     case 'path': {
-      const A = need(q, a.from, 'start'), B = need(q, a.to, 'end'), p = q.path(A.id, B.id);
+      const A = need(loaded, a.from, 'start'), B = need(loaded, a.to, 'end'), p = q.path(A.id, B.id);
       return p ? p.map((n) => `${n.label}${n.file && n.file !== n.label ? ` (${n.file})` : ''}`).join('\n→ ') : `No chain of links between ${A.label} and ${B.label}.`;
     }
     case 'health': {
@@ -90,8 +99,14 @@ function call(name, a = {}) {
   }
 }
 
+const fail = (id, code, message) => ({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
+
 export function handle(msg) {
-  const { id, method, params = {} } = msg;
+  // a batch (2025-03-26) is answered as one array; an empty one is an invalid request
+  if (Array.isArray(msg)) { if (!msg.length) return fail(null, -32600, 'Invalid Request'); const out = msg.map(handle).filter(Boolean); return out.length ? out : null; }
+  if (!msg || typeof msg !== 'object') return fail(null, -32600, 'Invalid Request');
+  if (typeof msg.method !== 'string') return 'result' in msg || 'error' in msg ? null : fail(msg.id, -32600, 'Invalid Request'); // the client's own answers need no reply
+  const { id, method } = msg, params = msg.params && typeof msg.params === 'object' ? msg.params : {};
   const ok = (result) => ({ jsonrpc: '2.0', id, result });
   if (method === 'initialize') return ok({
     protocolVersion: PROTOCOLS.includes(params.protocolVersion) ? params.protocolVersion : PROTOCOLS[0],
@@ -101,11 +116,16 @@ export function handle(msg) {
   if (method === 'ping') return ok({});
   if (method === 'tools/list') return ok({ tools: TOOLS });
   if (method === 'tools/call') {
-    try { return ok({ content: [{ type: 'text', text: call(params.name, params.arguments) }] }); }
+    // an unknown tool or a missing argument is a protocol error; a question the map cannot answer is a tool result
+    const tool = TOOLS.find((x) => x.name === params.name), args = params.arguments && typeof params.arguments === 'object' ? params.arguments : {};
+    if (!tool) return fail(id, -32602, `Unknown tool: ${params.name}`);
+    const missing = (tool.inputSchema.required || []).filter((k) => args[k] === undefined || args[k] === '');
+    if (missing.length) return fail(id, -32602, `Missing argument(s) for ${tool.name}: ${missing.join(', ')}`);
+    try { return ok({ content: [{ type: 'text', text: call(tool.name, args) }] }); }
     catch (e) { return ok({ content: [{ type: 'text', text: e.message }], isError: true }); }
   }
   if (id === undefined) return null; // notifications need no answer
-  return { jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } };
+  return fail(id, -32601, `Method not found: ${method}`);
 }
 
 export function serve(dir) {
@@ -118,9 +138,10 @@ export function serve(dir) {
     while ((i = buf.indexOf('\n')) >= 0) {
       const raw = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
       if (!raw) continue;
-      let msg;
-      try { msg = JSON.parse(raw); } catch { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) + '\n'); continue; }
-      const res = handle(msg);
+      let msg, res;
+      try { msg = JSON.parse(raw); } catch { process.stdout.write(JSON.stringify(fail(null, -32700, 'Parse error')) + '\n'); continue; }
+      // one bad message must never stop the server
+      try { res = handle(msg); } catch (e) { res = fail(msg?.id, -32603, `Internal error: ${e.message}`); }
       if (res) process.stdout.write(JSON.stringify(res) + '\n');
     }
   });

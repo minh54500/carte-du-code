@@ -110,7 +110,7 @@ Les dossiers lourds (`node_modules`, `dist`, `build`, `.next`, `venv`…) sont t
 
 ## Confidentialité
 
-Tout se passe sur ta machine : aucune requête réseau, aucune IA, aucun compte. La carte contient des noms de fichiers, de tables et de variables, jamais de valeurs. Elle décrit la structure de ton projet : ne publie pas celle d'un projet privé.
+Tout se passe sur ta machine : aucune requête réseau, aucune IA, aucun compte. La carte contient des noms de fichiers, de tables et de variables, jamais de valeurs, et la page du graphe contient le chemin du dossier du projet sur ta machine (pour les liens « Ouvrir dans VS Code »). Elle décrit la structure de ton projet : ne publie pas celle d'un projet privé.
 
 ## Limites
 
@@ -119,7 +119,7 @@ L'analyse lit le code par motifs, sans le compiler : un import dont le chemin es
 ## Développer
 
 ```bash
-npm test                 # 17 tests sur 8 mini-projets (Astro + Supabase, Next.js, Flask, Express + Prisma, monorepo, Django, SvelteKit, Nuxt)
+npm test                 # 18 tests sur 8 mini-projets (Astro + Supabase, Next.js, Flask, Express + Prisma, monorepo, Django, SvelteKit, Nuxt)
 npm run demo             # la carte du mini-projet Astro, ouverte dans le navigateur
 ```
 

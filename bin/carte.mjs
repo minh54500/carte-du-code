@@ -55,19 +55,20 @@ if (flags.version) { console.log(JSON.parse(readFileSync(fileURLToPath(new URL('
 const command = ['live', 'init', 'mcp'].includes(pos[0]) ? pos.shift() : 'build';
 const root = resolve(pos[0] || '.');
 if (!existsSync(root)) { console.error(`Dossier introuvable / folder not found: ${root}`); process.exit(1); }
-const cfg = loadConfig(root, { out: flags.out, lang: flags.lang, json: flags.json, ignore: flags.ignore });
-const say = (...m) => { if (!flags.quiet) console.log(...m); };
+if (command === 'mcp') serve(pos[0]); // each project's settings are read with each question
+else run();
 
-try {
-  if (command === 'mcp') serve(pos[0]);
-  else if (command === 'live') live(root, cfg, { port: Number(flags.port) || 4747 });
-  else {
+function run() {
+  const cfg = loadConfig(root, { out: flags.out, lang: flags.lang, json: flags.json, ignore: flags.ignore });
+  const say = (...m) => { if (!flags.quiet) console.log(...m); };
+  try {
+    if (command === 'live') return live(root, cfg, { port: Number(flags.port) || 4747 });
     const { paths, summary } = generate(root, cfg);
     if (command === 'init') for (const m of installHook(root, cfg, i18n(cfg.lang).t, { claude: flags.claude })) say(m);
     say(`${summary}\n  ${paths.md}\n  ${paths.html}`);
     if (flags.open) try { execFileSync(process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open', [paths.html], { stdio: 'ignore' }); } catch {}
+  } catch (e) {
+    console.error(`carte : ${e.message}`);
+    process.exit(1);
   }
-} catch (e) {
-  console.error(`carte : ${e.message}`);
-  process.exit(1);
 }

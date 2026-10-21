@@ -14,9 +14,11 @@ export function scan(root, ignore = []) {
   const extra = ignore.map(globToRe);
   let files = [];
   try {
-    files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', maxBuffer: 256 << 20, stdio: ['ignore', 'pipe', 'ignore'] }).split('\n').filter(Boolean);
+    // quotePath off and NUL-separated: accented names (mentions-légales.astro) come back as they are
+    files = execFileSync('git', ['-c', 'core.quotePath=false', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'utf8', maxBuffer: 256 << 20, stdio: ['ignore', 'pipe', 'ignore'] }).split('\0').filter(Boolean);
   } catch {
     const walk = (d) => {
+      if (files.length > 50000) return; // a home folder or a disk, not a project
       let names = [];
       try { names = readdirSync(join(root, d)); } catch { return; }
       for (const n of names) {
@@ -32,7 +34,7 @@ export function scan(root, ignore = []) {
   const set = new Set(kept);
   const has = (f) => set.has(f) || (!SKIP.test(f) && existsSync(join(root, f)) && statSync(join(root, f)).isFile());
   const cache = new Map();
-  const read = (f) => { if (!cache.has(f)) { try { cache.set(f, readFileSync(join(root, f), 'utf8')); } catch { cache.set(f, ''); } } return cache.get(f); };
+  const read = (f) => { if (!cache.has(f)) { try { cache.set(f, readFileSync(join(root, f), 'utf8').replace(/\r\n?/g, '\n')); } catch { cache.set(f, ''); } } return cache.get(f); };
   const json = (f) => { try { return JSON.parse(read(f).replace(/\/\*[\s\S]*?\*\/|^\s*\/\/.*$/gm, '').replace(/,\s*([}\]])/g, '$1')); } catch { return null; } };
   return { files: kept, has, read, json };
 }

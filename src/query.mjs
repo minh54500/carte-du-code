@@ -2,10 +2,20 @@
 // and the code's health (files nobody uses, import cycles, the files most others depend on).
 // Shared by the Markdown map, the graph page and the MCP server.
 
-// Items that are used from outside the code (a visitor, a host, a command), so "nobody imports them" is normal.
-const ENTRY = (n) => ['page', 'server', 'tool', 'db'].includes(n.col) || /^(npm|cron|job|route|table|rpc|model|bucket|collection):/.test(n.id)
-  || /(^|\/)(index|main|app|server|cli|__init__|setup|conftest|manage|wsgi|asgi|settings|urls|middleware|instrumentation)\.[\w]+$/.test(n.file || '')
-  || /\.(config|cli|d)\.[cm]?[jt]s$/.test(n.file || '') || /^(docs|examples?|scripts|\.github)\//.test(n.file || '') || n.test;
+// Items that are used from outside the code (a visitor, a host, a command, the framework itself), so "nobody imports them" is normal.
+const LOADED_BY_FRAMEWORK = [
+  /(^|\/)(index|main|app|App|server|cli|__init__|setup|conftest|manage|wsgi|asgi|settings|urls|middleware|instrumentation|sw|service-worker)\.[\w]+$/,
+  /\.(config|cli|d|stories)\.[cm]?[jt]sx?$/, /(^|\/)(docs|examples?|scripts|\.github|public|static)\//,
+  /(^|\/)(migrations|management|templatetags|fixtures)\//, /(^|\/)(admin|apps|signals|tasks|receivers)\.py$/, // Django
+  /(^|\/)_(app|document|error)\.[jt]sx?$/, // Next pages router
+  /(^|\/)(not-found|global-error|error|loading|default|template|layout|sitemap|robots|manifest|opengraph-image|twitter-image|icon|apple-icon)\.[jt]sx?$/, // Next app router
+  /(^|\/)hooks(\.server|\.client)?\.[jt]s$/, /(^|\/)\+(error|layout)\.svelte$/, /(^|\/)\+(page|layout)(\.server)?\.[jt]s$/, // SvelteKit
+  /(^|\/)content(\/config|\.config)\.[cm]?[jt]s$/, // Astro content collections
+  /(^|\/)(app|error)\.vue$/, // Nuxt
+];
+const NUXT_AUTO = /(^|\/)(app\/)?(components|composables|utils|plugins|middleware|layouts|server\/(utils|plugins|middleware|routes))\//;
+const ENTRY = (n, nuxt) => ['page', 'server', 'tool', 'db'].includes(n.col) || /^(npm|cron|job|route|table|rpc|model|bucket|collection):/.test(n.id)
+  || LOADED_BY_FRAMEWORK.some((re) => re.test(n.file || '')) || (nuxt && NUXT_AUTO.test(n.file || '')) || n.test;
 
 export function index(map) {
   const byId = new Map(map.nodes.map((n) => [n.id, n]));
@@ -31,8 +41,9 @@ export function index(map) {
     const s = String(q || '').toLowerCase();
     return map.nodes.filter((n) => `${n.label} ${n.file || ''} ${n.desc || ''}`.toLowerCase().includes(s)).sort((a, b) => b.uses - a.uses).slice(0, limit);
   };
-  const usedBy = (id, deep = false) => deep ? [...reach(rdep, id)].map((x) => byId.get(x)) : [...new Set((inn.get(id) || []).map((e) => byId.get(e.from)))];
-  const uses = (id, deep = false) => deep ? [...reach(dep, id)].map((x) => byId.get(x)) : [...new Set((out.get(id) || []).map((e) => byId.get(e.to)))];
+  // both read along dependencies, so the direct answer is always part of the deep one (a generated file uses the script that writes it)
+  const usedBy = (id, deep = false) => [...(deep ? reach(rdep, id) : rdep.get(id) || [])].map((x) => byId.get(x));
+  const uses = (id, deep = false) => [...(deep ? reach(dep, id) : dep.get(id) || [])].map((x) => byId.get(x));
   const bfs = (a, b, nb) => {
     const prev = new Map([[a, null]]), q = [a];
     while (q.length) { const x = q.shift(); if (x === b) break; for (const y of nb(x)) if (!prev.has(y)) { prev.set(y, x); q.push(y); } }
@@ -49,7 +60,8 @@ export function index(map) {
 
   function health() {
     const files = map.nodes.filter((n) => n.file && !/^(table|rpc|model|bucket|collection|npm|cron|job|route):/.test(n.id));
-    const unused = files.filter((n) => !inn.get(n.id)?.length && !ENTRY(n) && !/\.json$/.test(n.file)).sort((a, b) => a.file.localeCompare(b.file));
+    const nuxt = (map.kinds || []).includes('Nuxt');
+    const unused = files.filter((n) => !inn.get(n.id)?.length && !ENTRY(n, nuxt) && !/\.json$/.test(n.file)).sort((a, b) => a.file.localeCompare(b.file));
     // import cycles: strongly connected components of the "uses" links between files (Tarjan)
     const g = new Map();
     for (const e of map.edges) if (e.type === 'uses' && byId.get(e.from)?.file && byId.get(e.to)?.file) (g.get(e.from) || g.set(e.from, []).get(e.from)).push(e.to);
@@ -72,7 +84,10 @@ export function index(map) {
       }
     };
     for (const v of g.keys()) if (!idx.has(v)) strong(v);
-    const sensitive = files.map((n) => ({ n, count: reach(rdep, n.id).size })).filter((x) => x.count >= 3).sort((a, b) => b.count - a.count).slice(0, 10);
+    // tests are left out of the count: what matters is the code that would break. Only the 40 files with the most
+    // direct users are followed all the way, so a project made of one big import loop stays fast
+    const sensitive = files.filter((n) => !n.test).sort((a, b) => (rdep.get(b.id)?.size || 0) - (rdep.get(a.id)?.size || 0)).slice(0, 40)
+      .map((n) => ({ n, count: [...reach(rdep, n.id)].filter((id) => !byId.get(id)?.test).length })).filter((x) => x.count >= 3).sort((a, b) => b.count - a.count).slice(0, 10);
     return { unused, cycles, sensitive };
   }
 
@@ -93,3 +108,36 @@ export function diff(prev, map) {
     linksRemoved: (prev.edges || []).filter((e) => !en.has(key(e))).length,
   };
 }
+
+// The folder an item belongs to, for the colours and the folder bubbles of the graph.
+export function famOf(n) {
+  if (n.group) return n.group;
+  if (/^(table|rpc|model|bucket|job|collection):/.test(n.id)) return 'database';
+  if (n.id.startsWith('npm:')) return 'npm';
+  if (n.id.startsWith('cron:')) return 'cron';
+  const f = n.file || '', d = f.includes('/') ? f.slice(0, f.lastIndexOf('/')) : '(root)', p = d.split('/');
+  return p[0] === 'src' || p[0] === 'app' ? p.slice(0, Math.min(p.length, 3)).join('/') : p[0];
+}
+
+// One hue per folder that stays the same from one map to the next: folders already in the previous map keep theirs,
+// a new folder takes the hue of its name, moved round the wheel until it is far enough from the others.
+export function folderHues(nodes, prev = {}) {
+  const size = new Map();
+  for (const n of nodes) { const f = famOf(n); size.set(f, (size.get(f) || 0) + 1); }
+  const hues = {};
+  for (const f of size.keys()) if (typeof prev?.[f] === 'number') hues[f] = prev[f];
+  const dist = (a, b) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  for (const f of [...size.keys()].sort((a, b) => size.get(b) - size.get(a) || a.localeCompare(b))) {
+    if (f in hues) continue;
+    let h0 = 0; for (const c of f) h0 = (h0 * 31 + c.charCodeAt(0)) >>> 0;
+    let best = h0 % 360, gap = -1;
+    for (let k = 0; k < 14; k++) {
+      const h = Math.round((h0 + k * 137.508) % 360), g = Math.min(360, ...Object.values(hues).map((x) => dist(x, h)));
+      if (g >= 28) { best = h; break; }
+      if (g > gap) { gap = g; best = h; }
+    }
+    hues[f] = best;
+  }
+  return hues;
+}
+
