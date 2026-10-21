@@ -32,7 +32,7 @@ export function installHook(root, cfg, t, { claude = false } = {}) {
   if (claude) {
     const cm = join(root, 'CLAUDE.md');
     const text = existsSync(cm) ? readFileSync(cm, 'utf8') : '';
-    const section = `<!-- carte-du-code -->\n## Code map\n\nBefore searching this project's files, refresh and read its map: \`carte --quiet\`, then \`${cfg.out}/carte-du-code.md\` (pages, blocks, data, database, server, tools, who uses what). Skip it for a small change in a file you already know.\n<!-- /carte-du-code -->\n`;
+    const section = `<!-- carte-du-code -->\n## Code map\n\nBefore searching this project's files, refresh and read its map: \`carte --quiet\`, then \`${cfg.out}/carte-du-code.md\` (pages, blocks, data, database, server, tools, who uses what). If the \`carte\` MCP tools are connected, ask them instead: \`overview\`, \`item\`, \`who_uses\` (with deep before changing a shared file), \`path\`, \`search\`. Skip it for a small change in a file you already know.\n<!-- /carte-du-code -->\n`;
     const next = /<!-- carte-du-code -->[\s\S]*?<!-- \/carte-du-code -->\n?/.test(text) ? text.replace(/<!-- carte-du-code -->[\s\S]*?<!-- \/carte-du-code -->\n?/, section) : text.replace(/\n*$/, text ? '\n\n' : '') + section;
     writeFileSync(cm, next);
     msgs.push(t('cli.claude'));

@@ -34,27 +34,66 @@ export function analyze(root, cfg, t) {
   if (has('vercel.json') || ALL.some((f) => f.startsWith('api/'))) kinds.push('Vercel');
   if (has('netlify.toml')) kinds.push('Netlify');
   if (has('wrangler.toml') || ALL.some((f) => /(^|\/)_headers$/.test(f))) kinds.push('Cloudflare');
-  const WEB = kinds.some((k) => ['Astro', 'Next.js', 'SvelteKit', 'Nuxt', 'Vite', 'React', 'React Router'].includes(k)) || ALL.some((f) => /^[^/]+\.html?$/.test(f));
+  // workspaces (monorepos): apps/web, packages/ui… each with its own package.json; their names resolve to their entry
+  const wsPatterns = [].concat(pkg.workspaces?.packages || pkg.workspaces || []);
+  if (has('pnpm-workspace.yaml')) for (const m of read('pnpm-workspace.yaml').matchAll(/^\s*-\s*['"]?([^'"\n#]+)['"]?/gm)) wsPatterns.push(m[1].trim());
+  const wsRe = wsPatterns.map((g) => new RegExp('^' + g.replace(/\/$/, '').replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*\*/g, '.+').replace(/\*/g, '[^/]+') + '$'));
+  const workspaces = [];
+  for (const f of ALL) {
+    const d = dirname(f);
+    if (basename(f) !== 'package.json' || d === '.' || (wsRe.length && !wsRe.some((re) => re.test(d)))) continue;
+    if (!wsRe.length) continue;
+    const wp = json(f) || {};
+    const entry = [wp.source, typeof wp.exports === 'string' ? wp.exports : wp.exports?.['.']?.import || wp.exports?.['.']?.default || (typeof wp.exports?.['.'] === 'string' ? wp.exports['.'] : null), wp.module, wp.main].find(Boolean);
+    workspaces.push({ dir: d, name: wp.name || basename(d), entry: entry ? normalize(join(d, entry)) : null, deps: { ...wp.dependencies, ...wp.devDependencies } });
+  }
+  workspaces.sort((a, b) => b.dir.length - a.dir.length);
+  if (workspaces.length) kinds.push('monorepo');
+  for (const w of workspaces) {
+    if (w.deps.astro && !kinds.includes('Astro')) kinds.push('Astro');
+    if (w.deps.next && !kinds.includes('Next.js')) kinds.push('Next.js');
+    if (w.deps['@sveltejs/kit'] && !kinds.includes('SvelteKit')) kinds.push('SvelteKit');
+    if (w.deps.nuxt && !kinds.includes('Nuxt')) kinds.push('Nuxt');
+    if (w.deps.express && !kinds.includes('Express')) kinds.push('Express');
+    for (const [dep, k] of [['drizzle-orm', 'Drizzle'], ['mongoose', 'MongoDB'], ['firebase', 'Firebase'], ['@prisma/client', 'Prisma'], ['@supabase/supabase-js', 'Supabase']]) if (w.deps[dep] && !kinds.includes(k)) kinds.push(k);
+  }
+  const wsOf = (f) => workspaces.find((w) => f.startsWith(w.dir + '/')) || null;
+  const inWs = (f) => { const w = wsOf(f); return w ? f.slice(w.dir.length + 1) : f; };
+  if (ALL.some((f) => /(^|\/)(manage\.py|wsgi\.py|asgi\.py)$/.test(f)) || ALL.some((f) => /(^|\/)urls\.py$/.test(f))) kinds.push('Django');
+  if (deps['drizzle-orm'] && !kinds.includes('Drizzle')) kinds.push('Drizzle');
+  if ((deps.firebase || deps['firebase-admin']) && !kinds.includes('Firebase')) kinds.push('Firebase');
+  if (deps.mongoose && !kinds.includes('MongoDB')) kinds.push('MongoDB');
+  if (!kinds.length && has('package.json')) kinds.push('Node.js');
+  const WEB = kinds.some((k) => ['Astro', 'Next.js', 'SvelteKit', 'Nuxt', 'Vite', 'React', 'React Router', 'Django'].includes(k)) || ALL.some((f) => /^[^/]+\.html?$/.test(f));
 
   // ---------- files as nodes ----------
   function describe(text, file) {
     // the comment at the top of a file says what it is for
     const body = file.endsWith('.astro') || file.endsWith('.svelte') || file.endsWith('.vue') ? text.replace(/^---\n?/, '').replace(/^\s*<script[^>]*>\s*/, '') : text.replace(/^#!.*\n/, '').replace(/^\s*['"]use (client|server|strict)['"];?\s*/, '');
-    const m = body.match(/^\s*(?:\/\/\s?(.+)|\/\*+\s*([\s\S]*?)\*\/|#\s?(.+)|<!--\s*([\s\S]*?)-->|"""([\s\S]*?)"""|'''([\s\S]*?)''')/);
-    const s = (m && (m[1] || m[2] || m[3] || m[4] || m[5] || m[6]) || '').replace(/\s*\n\s*(\/\/|\*|#)?\s*/g, ' ').replace(/\s+/g, ' ').trim();
-    return s.length > 150 ? s.slice(0, 147) + '…' : s;
+    // a run of // or # lines counts as one comment; tool pragmas (@ts-check, eslint-disable…) are not a description
+    const pragma = /^\s*(?:\/\/|#)\s*(?:@ts-|eslint|prettier|biome|jshint|global |-\*-|type: ?ignore|noqa|pylint|#?region)/;
+    const lines = body.split('\n'); while (lines.length && pragma.test(lines[0])) lines.shift();
+    const m = lines.join('\n').match(/^\s*(?:((?:[ \t]*\/\/.*(?:\n|$))+)|\/\*+\s*([\s\S]*?)\*\/|((?:[ \t]*#.*(?:\n|$))+)|<!--\s*([\s\S]*?)-->|"""([\s\S]*?)"""|'''([\s\S]*?)''')/);
+    const s = (m && (m[1] || m[2] || m[3] || m[4] || m[5] || m[6]) || '').replace(/^[ \t]*(\/\/|#|\*)[ \t]?/gm, '').replace(/\s+/g, ' ').trim();
+    if (s.length <= 160) return s;
+    // long comments: up to the last full sentence that fits, else cut at a word
+    const end = s.lastIndexOf('. ', 160);
+    return end > 50 ? s.slice(0, end + 1) : s.slice(0, s.lastIndexOf(' ', 157)) + '…';
   }
-  function routeOf(f) {
+  function routeOf(full) {
+    const f = inWs(full);
     let m;
     if ((m = f.match(/^src\/pages\/(.+)\.(astro|md|mdx|html)$/)) && !/(^|\/)_/.test(m[1])) return '/' + m[1].replace(/(^|\/)index$/, '');
     if ((m = f.match(/^(?:src\/)?app\/(.*?)\/?page\.(tsx?|jsx?|mdx)$/))) return '/' + m[1].split('/').filter((s) => !/^\(.*\)$/.test(s) && !s.startsWith('@')).join('/');
     if ((m = f.match(/^(?:src\/)?pages\/(.+)\.(tsx?|jsx?|vue)$/)) && !m[1].startsWith('api/') && !/^_/.test(basename(m[1]))) return '/' + m[1].replace(/(^|\/)index$/, '');
     if ((m = f.match(/^src\/routes\/(.*?)\/?\+page\.svelte$/))) return '/' + m[1].split('/').filter((s) => !/^\(.*\)$/.test(s)).join('/');
     if ((m = f.match(/^app\/routes\/(.+)\.(tsx?|jsx?)$/))) return '/' + m[1].replace(/\./g, '/').replace(/(^|\/)_index$/, '').replace(/\$(\w+)/g, ':$1');
+    if ((m = f.match(/^pages\/(.+)\.vue$/)) && (deps.nuxt || wsOf(full)?.deps.nuxt)) return '/' + m[1].replace(/(^|\/)index$/, '');
     if (/^[^/]+\.html?$/.test(f)) return '/' + f.replace(/(^|\/)index\.html?$/, '').replace(/\.html?$/, '');
     return null;
   }
-  function endpointOf(f) {
+  function endpointOf(full) {
+    const f = inWs(full);
     let m;
     if ((m = f.match(/^api\/(.+)\.(ts|js|mjs|py)$/)) && !basename(m[1]).startsWith('_')) return '/api/' + m[1].replace(/\/index$/, '');
     if ((m = f.match(/^src\/pages\/(.+)\.(ts|js)$/))) return '/' + m[1];
@@ -63,11 +102,14 @@ export function analyze(root, cfg, t) {
     if ((m = f.match(/^src\/routes\/(.*?)\/?\+server\.(ts|js)$/))) return '/' + m[1];
     if ((m = f.match(/^netlify\/functions\/(.+)\.(ts|js|mjs)$/))) return '/.netlify/functions/' + m[1];
     if ((m = f.match(/^(?:supabase\/)?functions\/([\w-]+)\/index\.ts$/))) return '/functions/v1/' + m[1];
+    if ((m = f.match(/^server\/api\/(.+)\.(ts|js)$/))) return '/api/' + m[1].replace(/\/index$/, '').replace(/\.(get|post|put|patch|delete)$/, '');
+    if (/^(src\/)?middleware\.(ts|js)$/.test(f)) return '*';
     return null;
   }
-  function columnOf(f, text) {
-    if (routeOf(f) !== null) return 'page';
-    if (endpointOf(f) !== null) return 'server';
+  function columnOf(full, text) {
+    if (routeOf(full) !== null) return 'page';
+    if (endpointOf(full) !== null) return 'server';
+    const f = inWs(full);
     if (/(^|\/)(data|content|i18n|locales|fixtures)\//.test(f) || /\.json$/.test(f)) return 'data';
     if (/^(scripts|tools|bin)\//.test(f) || /\/scripts\//.test(f) || /\.(config)\.(m?[jt]s|cjs)$/.test(f) || /\.(sh|command)$/.test(f)) return 'tool';
     if (f.endsWith('.py') && (/__name__\s*==\s*['"]__main__['"]/.test(text) || /@\w+\.(route|get|post|put|patch|delete)\(/.test(text))) return 'page';
@@ -81,8 +123,13 @@ export function analyze(root, cfg, t) {
     if (/\.(sql|json|prisma)$/.test(f) || /(^|\/)(_headers|_redirects|netlify\.toml|wrangler\.toml)$/.test(f)) continue;
     const text = read(f);
     texts.set(f, text);
-    const route = routeOf(f), ep = endpointOf(f);
-    node(f, { col: columnOf(f, text), file: f, label: route !== null ? route || '/' : ep || short(f), desc: describe(text, f), route, endpoint: ep });
+    const route = routeOf(f), ep = endpointOf(f), w = wsOf(f);
+    const prefix = w && (route !== null || ep) ? `${w.name.replace(/^@[^/]+\//, '')} ` : '';
+    node(f, {
+      col: columnOf(f, text), file: f, label: prefix + (route !== null ? route || '/' : ep === '*' ? 'middleware' : ep || short(f)), desc: describe(text, f),
+      route, endpoint: ep === '*' ? null : ep, test: /(^|\/)(__tests__|tests?|spec|e2e|cypress|playwright)\//.test(f) || /\.(test|spec)\.[\w]+$/.test(f),
+      group: w ? w.name.replace(/^@[^/]+\//, '') : undefined,
+    });
   }
 
   // ---------- imports ----------
@@ -92,11 +139,27 @@ export function analyze(root, cfg, t) {
   if (!aliases.some(([a]) => a === '@/') && ALL.some((f) => f.startsWith('src/'))) aliases.push(['@/', 'src/']);
   if (deps['@sveltejs/kit']) aliases.push(['$lib/', 'src/lib/']);
   const EXT = ['', '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.mts', '.astro', '.svelte', '.vue', '.json', '/index.ts', '/index.tsx', '/index.js', '/index.jsx', '/index.astro', '/index.svelte', '/index.vue'];
+  const wsAliases = new Map(workspaces.map((w) => {
+    const tc = json(`${w.dir}/tsconfig.json`) || json(`${w.dir}/jsconfig.json`) || {};
+    const bu = join(w.dir, tc.compilerOptions?.baseUrl || '.');
+    const list = Object.entries(tc.compilerOptions?.paths || {}).map(([k, [v]]) => [k.replace(/\*$/, ''), join(bu, (v || '').replace(/\*$/, ''))]);
+    if (!list.some(([a]) => a === '@/')) list.push(['@/', `${w.dir}/src/`]);
+    return [w.dir, list];
+  }));
   function resolveImport(from, spec) {
     let base = null;
+    const w = wsOf(from);
     if (spec.startsWith('.')) base = join(dirname(from), spec);
     else if (spec.startsWith('/')) base = spec.slice(1);
-    else for (const [a, target] of aliases) if (spec.startsWith(a)) { base = join(target, spec.slice(a.length)); break; }
+    else {
+      const pkgWs = workspaces.find((x) => spec === x.name || spec.startsWith(x.name + '/'));
+      if (pkgWs) {
+        const sub = spec.slice(pkgWs.name.length).replace(/^\//, '');
+        if (!sub && pkgWs.entry) { for (const e of ['', '.ts', '.tsx', '.js', '/index.ts', '/index.js']) if (has(pkgWs.entry + e)) return pkgWs.entry + e; }
+        base = join(pkgWs.dir, sub || 'src/index');
+        if (!sub) for (const c of [`${pkgWs.dir}/src/index`, `${pkgWs.dir}/index`]) for (const e of ['.ts', '.tsx', '.js', '.mjs']) if (has(c + e)) return c + e;
+      } else for (const [a, target] of [...(w ? wsAliases.get(w.dir) : []), ...aliases]) if (spec.startsWith(a)) { base = join(target, spec.slice(a.length)); break; }
+    }
     if (base === null) return null;
     for (const e of EXT) { const c = normalize(base + e); if (has(c)) return c; }
     const noJs = base.replace(/\.(m|c)?jsx?$/, ''); // TypeScript ESM: './x.js' means './x.ts'
@@ -136,6 +199,28 @@ export function analyze(root, cfg, t) {
         const target = resolveImport(f, spec.startsWith('/') ? spec : './' + spec);
         if (target && !ASSET.test(target)) link(f, target);
       }
+    }
+  }
+
+  // implicit wrappers: Next.js layouts, SvelteKit layouts and load files, Nuxt layouts
+  for (const n of [...nodes.values()]) {
+    if (n.route === null || n.route === undefined || !n.file) continue;
+    const f = n.file, w = wsOf(f), base = w ? w.dir + '/' : '';
+    const rel = inWs(f);
+    if (/^(src\/)?app\//.test(rel)) {
+      let d = dirname(f);
+      for (;;) { for (const x of ['layout', 'template', 'loading', 'error']) for (const e of ['tsx', 'jsx', 'js', 'ts']) if (has(`${d}/${x}.${e}`) && nodes.has(`${d}/${x}.${e}`) && (x === 'layout' || x === 'template' || d === dirname(f))) link(f, `${d}/${x}.${e}`, 'wrapped by');
+        if (/(^|\/)app$/.test(d) || d === '.' || !d.includes('/')) break; d = dirname(d); }
+    }
+    if (/^src\/routes\//.test(rel)) {
+      const d0 = dirname(f);
+      for (const x of ['+page.ts', '+page.js', '+page.server.ts', '+page.server.js']) if (nodes.has(`${d0}/${x}`)) link(f, `${d0}/${x}`, 'loads');
+      let d = d0;
+      for (;;) { for (const x of ['+layout.svelte', '+layout.ts', '+layout.server.ts']) if (nodes.has(`${d}/${x}`)) link(f, `${d}/${x}`, 'wrapped by'); if (/(^|\/)src\/routes$/.test(d)) break; d = dirname(d); }
+    }
+    if ((deps.nuxt || w?.deps.nuxt) && /^pages\//.test(rel)) {
+      const lay = (texts.get(f) || '').match(/layout\s*:\s*['"]([\w-]+)['"]/)?.[1] || 'default';
+      for (const e of ['vue']) if (nodes.has(`${base}layouts/${lay}.${e}`)) link(f, `${base}layouts/${lay}.${e}`, 'wrapped by');
     }
   }
 
@@ -196,6 +281,33 @@ export function analyze(root, cfg, t) {
   // Prisma models
   const models = [];
   for (const f of ALL.filter((x) => x.endsWith('.prisma'))) for (const m of read(f).matchAll(/^\s*model\s+(\w+)\s*\{/gm)) { models.push(m[1]); node(`model:${m[1]}`, { col: 'db', label: m[1], file: f, desc: t('db.model') }); }
+
+  // Django: models, and urls.py routes pointing to views
+  const djangoModels = [];
+  for (const [f, s] of texts) if (f.endsWith('.py')) {
+    for (const m of s.matchAll(/^class\s+(\w+)\((?:[\w.]*models\.)?Model\)/gm)) { djangoModels.push(m[1]); node(`model:${m[1]}`, { col: 'db', label: m[1], file: f, desc: t('db.django') }); }
+    if (basename(f) === 'urls.py') for (const m of s.matchAll(/(?:re_)?path\(\s*r?['"]([^'"]*)['"]\s*,\s*([\w.]+)/g)) {
+      const id = `route:DJ /${m[1]}`;
+      node(id, { col: 'page', label: `/${m[1]}`, file: f, desc: m[2], endpoint: `/${m[1]}` });
+      link(id, f, 'defined in');
+      const mod = m[2].split('.')[0];
+      const views = [`${dirname(f)}/${mod}.py`, `${dirname(f)}/views.py`].find((c) => nodes.has(c));
+      if (views && mod !== 'include') link(id, views, 'calls');
+    }
+  }
+  // Drizzle tables, Firestore collections, Mongoose models
+  const drizzle = new Map();
+  for (const [f, s] of texts) {
+    for (const m of s.matchAll(/(?:export\s+)?const\s+(\w+)\s*=\s*(?:pg|sqlite|mysql)Table\(\s*['"](\w+)['"]/g)) { drizzle.set(m[1], m[2]); if (!nodes.has(`table:${m[2]}`)) node(`table:${m[2]}`, { col: 'db', label: m[2], file: f, desc: t('db.drizzle') }); }
+    for (const m of s.matchAll(/(?:\bcollection\(\s*\w+\s*,\s*|\.collection\(\s*|\bdoc\(\s*\w+\s*,\s*)['"]([\w-]+)['"]/g)) { node(`collection:${m[1]}`, { col: 'db', label: m[1], desc: t('db.firestore') }); link(f, `collection:${m[1]}`, 'reads/writes'); }
+    if (/mongoose/.test(s)) for (const m of s.matchAll(/\bmodel\(\s*['"](\w+)['"]\s*,/g)) node(`model:${m[1]}`, { col: 'db', label: m[1], file: f, desc: t('db.mongo') });
+  }
+  const mongo = [...nodes.values()].filter((n) => n.desc === t('db.mongo')).map((n) => n.label);
+  for (const [f, s] of texts) {
+    for (const [v, tb] of drizzle) if (new RegExp(`(?:\\.from|\\binsert|\\bupdate|\\bdelete)\\(\\s*${v}\\s*\\)|db\\.query\\.${v}\\b`).test(s)) link(f, `table:${tb}`, 'reads/writes');
+    for (const mo of mongo) if (new RegExp(`\\b${mo}\\.(?:find|findOne|findById|create|insertMany|updateOne|updateMany|deleteOne|deleteMany|aggregate|countDocuments)\\b`).test(s)) link(f, `model:${mo}`, 'reads/writes');
+    for (const mo of djangoModels) if (f.endsWith('.py') && new RegExp(`\\b${mo}\\.objects\\b|ForeignKey\\(\\s*['"]?${mo}\\b`).test(s)) link(f, `model:${mo}`, 'reads/writes');
+  }
 
   const tableNames = [...tables.keys()], fnNames = [...fns.keys()];
   for (const [f, s] of texts) {

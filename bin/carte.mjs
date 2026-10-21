@@ -9,6 +9,7 @@ import { generate } from '../src/generate.mjs';
 import { installHook } from '../src/init.mjs';
 import { live } from '../src/live.mjs';
 import { i18n } from '../src/i18n.mjs';
+import { serve } from '../src/mcp.mjs';
 
 const HELP = `carte — la carte du code d'un projet / the code map of a project
 
@@ -17,6 +18,8 @@ Usage
   carte live [dossier]       carte en direct, redessinée à chaque sauvegarde / live map, redrawn on every save
   carte init [dossier]       la refait après chaque commit, la garde hors de git / refresh after every commit
   carte init --claude        + dit à Claude Code de la lire en premier (CLAUDE.md) / + tell Claude Code to read it first
+  carte mcp                  serveur MCP : l'assistant interroge la carte directement / MCP server for AI assistants
+                             claude mcp add carte -s user -- carte mcp
 
 Options
   --out <dossier>    dossier de sortie (défaut docs/carte) / output folder
@@ -49,14 +52,15 @@ for (let i = 0; i < argv.length; i++) {
 if (flags.help) { console.log(HELP); process.exit(0); }
 if (flags.version) { console.log(JSON.parse(readFileSync(fileURLToPath(new URL('../package.json', import.meta.url)), 'utf8')).version); process.exit(0); }
 
-const command = ['live', 'init'].includes(pos[0]) ? pos.shift() : 'build';
+const command = ['live', 'init', 'mcp'].includes(pos[0]) ? pos.shift() : 'build';
 const root = resolve(pos[0] || '.');
 if (!existsSync(root)) { console.error(`Dossier introuvable / folder not found: ${root}`); process.exit(1); }
 const cfg = loadConfig(root, { out: flags.out, lang: flags.lang, json: flags.json, ignore: flags.ignore });
 const say = (...m) => { if (!flags.quiet) console.log(...m); };
 
 try {
-  if (command === 'live') live(root, cfg, { port: Number(flags.port) || 4747 });
+  if (command === 'mcp') serve(pos[0]);
+  else if (command === 'live') live(root, cfg, { port: Number(flags.port) || 4747 });
   else {
     const { paths, summary } = generate(root, cfg);
     if (command === 'init') for (const m of installHook(root, cfg, i18n(cfg.lang).t, { claude: flags.claude })) say(m);

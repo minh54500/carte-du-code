@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { readdirSync, statSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-export const SKIP = /(^|\/)(node_modules|\.git|dist|build|build-cache|\.next|\.astro|\.svelte-kit|\.nuxt|\.output|\.vercel|\.netlify|\.turbo|coverage|\.venv|venv|env|__pycache__|\.pytest_cache|\.mypy_cache|graphify-out|_archive|vendor|Pods|DerivedData|\.build|docs\/carte|\.agents|\.claude)(\/|$)/;
+export const SKIP = /(^|\/)(node_modules|\.git|dist|build|build-cache|\.next|\.astro|\.svelte-kit|\.nuxt|\.output|\.vercel|\.netlify|\.turbo|coverage|\.venv|venv|env|__pycache__|\.pytest_cache|\.mypy_cache|graphify-out|_archive|vendor|Pods|DerivedData|\.build|docs\/carte|\.agents|\.claude|(?:tests?|__tests__|spec)\/fixtures|__fixtures__)(\/|$)/;
 export const CODE = /\.(astro|tsx?|jsx?|mjs|cjs|mts|cts|svelte|vue|py|swift|html?|sql|sh|command|prisma)$/;
 const CONFIG = /(^|\/)(package\.json|vercel\.json|netlify\.toml|wrangler\.toml|_headers|_redirects|tsconfig\.json|jsconfig\.json)$/;
 
