@@ -1,0 +1,10 @@
+{
+  "name": "resto-demo",
+  "scripts": {
+    "build": "node scripts/sync.mjs && astro build"
+  },
+  "dependencies": {
+    "astro": "5.0.0",
+    "@supabase/supabase-js": "2.0.0"
+  }
+}

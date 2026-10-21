@@ -1,0 +1,10 @@
+{
+  "name": "api-demo",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "4.0.0",
+    "@prisma/client": "5.0.0"
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "name": "carte-du-code",
+  "version": "1.0.0",
+  "description": "Code map of a project in one command: pages, components, data, database, server and tools, with who uses what. A Markdown map for AI assistants and a live 'brain' graph for humans. Zero dependencies.",
+  "type": "module",
+  "bin": {
+    "carte": "bin/carte.mjs",
+    "carte-du-code": "bin/carte.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "demo": "node bin/carte.mjs test/fixtures/astro-supabase --open"
+  },
+  "keywords": [
+    "code-map",
+    "architecture",
+    "dependency-graph",
+    "astro",
+    "nextjs",
+    "supabase",
+    "claude-code",
+    "ai-agents",
+    "knowledge-graph",
+    "visualization"
+  ],
+  "author": "BUI VAN Minh",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/minh54500/carte-du-code.git"
+  },
+  "homepage": "https://github.com/minh54500/carte-du-code#readme",
+  "bugs": {
+    "url": "https://github.com/minh54500/carte-du-code/issues"
+  }
+}
